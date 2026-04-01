@@ -6,6 +6,7 @@ Open3D 可视化模块
 
 from typing import List, Optional
 
+import numpy as np
 import open3d as o3d
 
 from app.core.fusion import FusionResult
@@ -122,7 +123,7 @@ def _create_visualizer(
 
     # 设置渲染选项
     render_opt = vis.get_render_option()
-    render_opt.background_color = background_color
+    render_opt.background_color = np.array(background_color, dtype=np.float64)
     render_opt.point_size = point_size
     render_opt.show_coordinate_frame = True  # 显示坐标轴辅助参考
 

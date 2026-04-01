@@ -11,9 +11,10 @@ Open3D 采用独立弹出窗口方式，不嵌入 Qt。
 from pathlib import Path
 from typing import Optional
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QFont, QColor, QPalette
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
+    QApplication,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -38,53 +39,6 @@ logger = get_logger("ui.main_window")
 
 
 # -------------------------------------------------------
-# 后台工作线程：避免 Open3D 渲染阻塞 Qt 主线程
-# -------------------------------------------------------
-class _ViewerThread(QThread):
-    """在子线程中运行 Open3D 窗口，防止 Qt 事件循环被阻塞。"""
-
-    finished = pyqtSignal()
-    error = pyqtSignal(str)
-
-    def __init__(self, mode: str, pcd=None, fusion_result=None, cfg: dict = None):
-        super().__init__()
-        self._mode = mode                   # "raw" 或 "fusion"
-        self._pcd = pcd
-        self._fusion_result = fusion_result
-        self._cfg = cfg or {}
-
-    def run(self):
-        try:
-            vis_cfg = self._cfg.get("visualization", {})
-            bg = vis_cfg.get("background_color", [0.05, 0.05, 0.05])
-            w = vis_cfg.get("window_width", 1280)
-            h = vis_cfg.get("window_height", 720)
-            ps = vis_cfg.get("point_size", 2.0)
-            title = vis_cfg.get("window_title", "3D 点云感知结果")
-
-            if self._mode == "raw" and self._pcd is not None:
-                show_pointcloud(
-                    self._pcd,
-                    window_title="点云预览",
-                    width=w, height=h,
-                    background_color=bg,
-                    point_size=ps,
-                )
-            elif self._mode == "fusion" and self._fusion_result is not None:
-                show_fusion_result(
-                    self._fusion_result,
-                    window_title=title,
-                    width=w, height=h,
-                    background_color=bg,
-                    point_size=ps,
-                )
-        except Exception as exc:
-            self.error.emit(str(exc))
-        finally:
-            self.finished.emit()
-
-
-# -------------------------------------------------------
 # 主窗口
 # -------------------------------------------------------
 class MainWindow(QMainWindow):
@@ -96,7 +50,6 @@ class MainWindow(QMainWindow):
         self._current_file: Optional[Path] = None
         self._loaded_pcd: Optional[o3d.geometry.PointCloud] = None
         self._fusion_result: Optional[FusionResult] = None
-        self._viewer_thread: Optional[_ViewerThread] = None
 
         self._build_ui()
         self._apply_style()
@@ -348,45 +301,55 @@ class MainWindow(QMainWindow):
             self._status_bar.showMessage("演示失败")
 
     # --------------------------------------------------
-    # 启动 Open3D 线程
+    # 启动 Open3D 窗口（主线程直接调用）
     # --------------------------------------------------
     def _launch_viewer(self, mode: str) -> None:
         """
-        在子线程中启动 Open3D 窗口，防止阻塞 Qt 事件循环。
-        同一时间只允许一个 Open3D 窗口存在。
+        在主线程直接调用 Open3D 窗口。
+        Open3D 底层依赖 GLFW/OpenGL，Windows 要求 OpenGL 上下文必须在
+        创建它的线程中使用（即主线程），在子线程中调用会导致崩溃或黑屏。
+        Open3D vis.run() 会阻塞直到用户关闭窗口，关闭后 Qt 自动恢复响应。
         """
-        # 若上次线程仍在运行，等待结束
-        if self._viewer_thread is not None and self._viewer_thread.isRunning():
-            self._log("已有 Open3D 窗口正在运行，请先关闭")
-            return
+        vis_cfg = self._config.get("visualization", {})
+        bg = vis_cfg.get("background_color", [0.05, 0.05, 0.05])
+        w = vis_cfg.get("window_width", 1280)
+        h = vis_cfg.get("window_height", 720)
+        ps = vis_cfg.get("point_size", 2.0)
+        title = vis_cfg.get("window_title", "3D点云感知结果")
 
-        self._viewer_thread = _ViewerThread(
-            mode=mode,
-            pcd=self._loaded_pcd,
-            fusion_result=self._fusion_result,
-            cfg=self._config,
-        )
-        self._viewer_thread.finished.connect(self._on_viewer_finished)
-        self._viewer_thread.error.connect(self._on_viewer_error)
-        self._viewer_thread.start()
-
-        # 禁用操作按钮，避免并发操作
+        # 打开窗口前禁用按钮，防止用户在窗口打开期间重复点击
         self._btn_select.setEnabled(False)
         self._btn_load.setEnabled(False)
         self._btn_demo.setEnabled(False)
+        # 强制刷新 Qt 界面，让按钮禁用状态立即生效
+        QApplication.processEvents()
 
-    def _on_viewer_finished(self) -> None:
-        """Open3D 窗口关闭后的回调：恢复按钮状态。"""
-        self._btn_select.setEnabled(True)
-        if self._current_file:
-            self._btn_load.setEnabled(True)
-        if self._loaded_pcd is not None:
-            self._btn_demo.setEnabled(True)
-        self._status_bar.showMessage("就绪")
-        self._log("Open3D 窗口已关闭，可继续操作")
-
-    def _on_viewer_error(self, msg: str) -> None:
-        """Open3D 渲染出错时的回调。"""
-        logger.error("Open3D 渲染错误: %s", msg)
-        QMessageBox.critical(self, "渲染错误", f"Open3D 窗口发生错误：\n{msg}")
-        self._on_viewer_finished()
+        try:
+            if mode == "raw" and self._loaded_pcd is not None:
+                show_pointcloud(
+                    self._loaded_pcd,
+                    window_title="点云预览",
+                    width=w, height=h,
+                    background_color=bg,
+                    point_size=ps,
+                )
+            elif mode == "fusion" and self._fusion_result is not None:
+                show_fusion_result(
+                    self._fusion_result,
+                    window_title=title,
+                    width=w, height=h,
+                    background_color=bg,
+                    point_size=ps,
+                )
+        except Exception as exc:
+            logger.error("Open3D 渲染错误: %s", exc, exc_info=True)
+            QMessageBox.critical(self, "渲染错误", f"Open3D 窗口发生错误：\n{exc}")
+        finally:
+            # 窗口关闭后恢复按钮状态
+            self._btn_select.setEnabled(True)
+            if self._current_file:
+                self._btn_load.setEnabled(True)
+            if self._loaded_pcd is not None:
+                self._btn_demo.setEnabled(True)
+            self._status_bar.showMessage("就绪")
+            self._log("Open3D 窗口已关闭，可继续操作")

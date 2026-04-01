@@ -1,0 +1,43 @@
+2026-04-01 17:04:26 | INFO     | dynamic_3d | 日志系统初始化完成 | 根目录: /Users/meishuangyang/Desktop/sht/dynamic_3d_obstacle_system
+2026-04-01 17:04:38 | INFO     | dynamic_3d | 日志系统初始化完成 | 根目录: /Users/meishuangyang/Desktop/sht/dynamic_3d_obstacle_system
+2026-04-01 17:04:38 | INFO     | dynamic_3d.test | 创建测试点云: 5000 个点
+2026-04-01 17:04:38 | INFO     | dynamic_3d.core.fake_segmentor | 开始伪语义分割，类别数: 4
+2026-04-01 17:04:38 | INFO     | dynamic_3d.core.fake_segmentor | 伪语义分割完成，共处理 5000 个点
+2026-04-01 17:04:38 | INFO     | dynamic_3d.test | 分割完成，颜色数: 5000, 标签数: 5000
+2026-04-01 17:04:38 | INFO     | dynamic_3d.core.fake_detector | 开始伪检测，目标框数量: 3
+2026-04-01 17:04:38 | INFO     | dynamic_3d.core.fake_detector | 伪检测完成，共生成 3 个检测框
+2026-04-01 17:04:38 | INFO     | dynamic_3d.test | 检测完成，框数: 3
+2026-04-01 17:04:38 | INFO     | dynamic_3d.test |   -> pedestrian (0.938) center=(-4.05, 1.09, -9.10)
+2026-04-01 17:04:38 | INFO     | dynamic_3d.test |   -> car (0.881) center=(5.51, -2.93, -9.20)
+2026-04-01 17:04:38 | INFO     | dynamic_3d.test |   -> cyclist (0.966) center=(-0.39, -8.07, -9.20)
+2026-04-01 17:04:38 | INFO     | dynamic_3d.core.fusion | 开始完整推理流水线
+2026-04-01 17:04:38 | INFO     | dynamic_3d.core.fusion | 步骤1/2：语义分割
+2026-04-01 17:04:38 | INFO     | dynamic_3d.core.fake_segmentor | 开始伪语义分割，类别数: 4
+2026-04-01 17:04:38 | INFO     | dynamic_3d.core.fake_segmentor | 伪语义分割完成，共处理 5000 个点
+2026-04-01 17:04:38 | INFO     | dynamic_3d.core.fusion | 步骤2/2：3D目标检测
+2026-04-01 17:04:38 | INFO     | dynamic_3d.core.fake_detector | 开始伪检测，目标框数量: 3
+2026-04-01 17:04:38 | INFO     | dynamic_3d.core.fake_detector | 伪检测完成，共生成 3 个检测框
+2026-04-01 17:04:38 | INFO     | dynamic_3d.core.fusion | 流水线完成 | 分割点数: 5000 | 检测框数: 3
+2026-04-01 17:04:38 | INFO     | dynamic_3d.test | 融合完成，几何体数: 4
+2026-04-01 17:04:50 | INFO     | dynamic_3d | 日志系统初始化完成 | 根目录: /Users/meishuangyang/Desktop/sht/dynamic_3d_obstacle_system
+2026-04-01 17:04:51 | INFO     | dynamic_3d.io.pointcloud_loader | 加载 .bin 文件: data/test_cloud.bin
+2026-04-01 17:04:51 | INFO     | dynamic_3d.io.pointcloud_loader | 成功加载 .bin 点云，共 8000 个点
+2026-04-01 17:05:15 | INFO     | dynamic_3d | 日志系统初始化完成 | 根目录: /Users/meishuangyang/Desktop/sht/dynamic_3d_obstacle_system
+2026-04-01 17:05:54 | INFO     | dynamic_3d | 日志系统初始化完成 | 根目录: /Users/meishuangyang/Desktop/sht/dynamic_3d_obstacle_system
+2026-04-01 17:05:54 | INFO     | dynamic_3d.io.pointcloud_loader | 加载 .bin 文件: data/test_cloud.bin
+2026-04-01 17:05:54 | INFO     | dynamic_3d.io.pointcloud_loader | 成功加载 .bin 点云，共 8000 个点
+2026-04-01 17:05:54 | INFO     | dynamic_3d.final_test | [✓] .bin 加载 | 点数: 8000
+2026-04-01 17:05:54 | INFO     | dynamic_3d.core.fusion | 开始完整推理流水线
+2026-04-01 17:05:54 | INFO     | dynamic_3d.core.fusion | 步骤1/2：语义分割
+2026-04-01 17:05:54 | INFO     | dynamic_3d.core.fake_segmentor | 开始伪语义分割，类别数: 4
+2026-04-01 17:05:54 | INFO     | dynamic_3d.core.fake_segmentor | 伪语义分割完成，共处理 8000 个点
+2026-04-01 17:05:54 | INFO     | dynamic_3d.core.fusion | 步骤2/2：3D目标检测
+2026-04-01 17:05:54 | INFO     | dynamic_3d.core.fake_detector | 开始伪检测，目标框数量: 3
+2026-04-01 17:05:54 | INFO     | dynamic_3d.core.fake_detector | 伪检测完成，共生成 3 个检测框
+2026-04-01 17:05:54 | INFO     | dynamic_3d.core.fusion | 流水线完成 | 分割点数: 8000 | 检测框数: 3
+2026-04-01 17:05:54 | INFO     | dynamic_3d.final_test | [✓] 流水线 | 几何体: 4个（1点云+3框）
+2026-04-01 17:05:54 | INFO     | dynamic_3d.final_test |     框#1 | pedestrian   | score=0.874
+2026-04-01 17:05:54 | INFO     | dynamic_3d.final_test |     框#2 | cyclist      | score=0.904
+2026-04-01 17:05:54 | INFO     | dynamic_3d.final_test |     框#3 | car          | score=0.930
+2026-04-01 17:05:54 | INFO     | dynamic_3d.final_test | [✓] main.py 全部导入正常
+2026-04-01 17:09:37 | INFO     | dynamic_3d | 日志系统初始化完成 | 根目录: /Users/meishuangyang/Desktop/sht/dynamic_3d_obstacle_system

@@ -6,7 +6,7 @@
 
 import random
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import open3d as o3d
@@ -41,7 +41,7 @@ class DetectionResult:
     center: np.ndarray                  # 框中心坐标 (3,)
     size: np.ndarray                    # 框尺寸 [长, 宽, 高]
     rotation_y: float                   # 绕 Y 轴旋转角（弧度）
-    box_geometry: o3d.geometry.OrientedBoundingBox = field(default=None, repr=False)
+    box_geometry: Optional[o3d.geometry.OrientedBoundingBox] = field(default=None, repr=False)
 
 
 def run_fake_detection(
