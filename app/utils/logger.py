@@ -9,10 +9,6 @@ from pathlib import Path
 from typing import Optional
 
 
-# 模块级别的日志器缓存，避免重复初始化
-_initialized: bool = False
-
-
 def setup_logger(
     name: str = "dynamic_3d",
     level: str = "DEBUG",
@@ -33,8 +29,6 @@ def setup_logger(
         filename:     日志文件名
         project_root: 项目根目录路径，默认使用此文件上溯两级
     """
-    global _initialized
-
     # 确定项目根目录
     if project_root is None:
         # 此文件位于 app/utils/logger.py，上溯两级即项目根
@@ -42,8 +36,8 @@ def setup_logger(
 
     logger = logging.getLogger(name)
 
-    # 防止重复添加 handler
-    if _initialized and logger.handlers:
+    # 直接检查 handlers 是否已存在，防止重复添加（对 importlib.reload 也安全）
+    if logger.handlers:
         return logger
 
     # 解析日志级别
@@ -76,7 +70,6 @@ def setup_logger(
     # 避免日志向 root logger 传播导致重复打印
     logger.propagate = False
 
-    _initialized = True
     logger.info("日志系统初始化完成 | 根目录: %s", project_root)
     return logger
 

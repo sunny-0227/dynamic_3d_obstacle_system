@@ -49,6 +49,10 @@ def _load_bin(path: Path) -> o3d.geometry.PointCloud:
     读取 KITTI 风格的 .bin 二进制点云文件。
     数据按 float32 存储，列数为 4（x,y,z,intensity）或 5（x,y,z,intensity,ring）。
     仅提取前三列 xyz 作为点坐标。
+
+    列数检测策略：
+        优先尝试 4 列，再尝试 5 列。当 raw.size 同时能被 4 和 5 整除时（如 20 个
+        float 元素），固定选择 4 列，符合 KITTI 标准格式约定。
     """
     logger.info("加载 .bin 文件: %s", path)
 

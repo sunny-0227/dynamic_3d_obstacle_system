@@ -41,3 +41,12 @@
 2026-04-01 17:05:54 | INFO     | dynamic_3d.final_test |     框#3 | car          | score=0.930
 2026-04-01 17:05:54 | INFO     | dynamic_3d.final_test | [✓] main.py 全部导入正常
 2026-04-01 17:09:37 | INFO     | dynamic_3d | 日志系统初始化完成 | 根目录: /Users/meishuangyang/Desktop/sht/dynamic_3d_obstacle_system
+2026-04-01 17:17:03 | INFO     | dynamic_3d | 日志系统初始化完成 | 根目录: /Users/meishuangyang/Desktop/sht/dynamic_3d_obstacle_system
+2026-04-01 17:17:03 | INFO     | dynamic_3d.core.fusion | 开始完整推理流水线
+2026-04-01 17:17:03 | INFO     | dynamic_3d.core.fusion | 步骤1/2：语义分割
+2026-04-01 17:17:03 | INFO     | dynamic_3d.core.fake_segmentor | 开始伪语义分割，类别数: 4
+2026-04-01 17:17:03 | INFO     | dynamic_3d.core.fake_segmentor | 伪语义分割完成，共处理 3000 个点
+2026-04-01 17:17:03 | INFO     | dynamic_3d.core.fusion | 步骤2/2：3D目标检测
+2026-04-01 17:17:03 | INFO     | dynamic_3d.core.fake_detector | 开始伪检测，目标框数量: 3
+2026-04-01 17:17:03 | INFO     | dynamic_3d.core.fake_detector | 伪检测完成，共生成 3 个检测框
+2026-04-01 17:17:03 | INFO     | dynamic_3d.core.fusion | 流水线完成 | 分割点数: 3000 | 检测框数: 3

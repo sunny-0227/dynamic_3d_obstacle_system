@@ -276,12 +276,15 @@ class MainWindow(QMainWindow):
             num_boxes = det_cfg.get("num_boxes", 3)
             score_range = tuple(det_cfg.get("score_range", [0.75, 0.99]))
             num_classes = seg_cfg.get("num_classes", 4)
+            # 从配置中读取类别颜色，None 时 run_full_pipeline 内部使用默认值
+            class_colors = seg_cfg.get("class_colors", None)
 
             self._fusion_result = run_full_pipeline(
                 self._loaded_pcd,
                 num_boxes=num_boxes,
                 score_range=score_range,
                 num_classes=num_classes,
+                class_colors=class_colors,
             )
 
             # 打印检测摘要

@@ -48,6 +48,7 @@ def run_full_pipeline(
     num_boxes: int = 3,
     score_range: tuple = (0.75, 0.99),
     num_classes: int = 4,
+    class_colors: dict = None,
 ) -> FusionResult:
     """
     执行完整的伪推理流水线：语义分割 + 3D目标检测，并将结果融合。
@@ -57,16 +58,17 @@ def run_full_pipeline(
         num_boxes:    伪检测框数量
         score_range:  置信度随机区间
         num_classes:  语义类别数量
+        class_colors: 语义类别颜色字典 {int: [R, G, B]}，None 则使用模块默认值
 
     返回：
         FusionResult 数据对象
     """
     logger.info("开始完整推理流水线")
 
-    # 步骤1：执行伪语义分割
+    # 步骤1：执行伪语义分割（透传外部颜色配置，None 时使用模块内置默认值）
     logger.info("步骤1/2：语义分割")
     segmented_pcd, seg_labels = run_fake_segmentation(
-        pcd, num_classes=num_classes
+        pcd, num_classes=num_classes, class_colors=class_colors
     )
 
     # 步骤2：执行伪3D目标检测

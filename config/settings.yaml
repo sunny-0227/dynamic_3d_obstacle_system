@@ -17,9 +17,11 @@ logging:
 
 # 点云加载配置
 pointcloud:
-  bin_dtype: "float32"    # .bin 文件的数据类型
-  bin_cols: 4             # .bin 默认列数（N,4）或（N,5），至少取前3列 xyz
-  default_data_dir: "data" # 默认点云数据目录
+  # 注意：bin_dtype 和 bin_cols 为里程碑2预留字段，当前代码硬编码 float32 / 自动检测4或5列
+  # 修改此处不会影响运行时行为，待里程碑2将配置注入 load_pointcloud 后生效
+  bin_dtype: "float32"    # .bin 文件的数据类型（预留，当前未读取）
+  bin_cols: 4             # .bin 默认列数（预留，当前自动检测 4 或 5 列）
+  default_data_dir: "data" # 默认点云数据目录（GUI 文件选择框初始目录）
 
 # 伪检测器配置
 fake_detector:

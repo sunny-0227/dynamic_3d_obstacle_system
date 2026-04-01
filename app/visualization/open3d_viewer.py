@@ -20,7 +20,7 @@ def show_pointcloud(
     window_title: str = "点云预览",
     width: int = 1280,
     height: int = 720,
-    background_color: List[float] = None,
+    background_color: Optional[List[float]] = None,
     point_size: float = 2.0,
 ) -> None:
     """
@@ -59,7 +59,7 @@ def show_fusion_result(
     window_title: str = "3D点云感知结果",
     width: int = 1280,
     height: int = 720,
-    background_color: List[float] = None,
+    background_color: Optional[List[float]] = None,
     point_size: float = 2.0,
 ) -> None:
     """
