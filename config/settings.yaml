@@ -1,0 +1,45 @@
+# ==============================
+# 动态3D障碍物系统 - 全局配置
+# ==============================
+
+# 应用基本信息
+app:
+  name: "动态3D障碍物感知系统"
+  version: "1.0.0"
+  stage: "phase1_fake"
+
+# 日志配置
+logging:
+  level: "DEBUG"          # DEBUG / INFO / WARNING / ERROR
+  to_file: true           # 是否写入文件
+  log_dir: "outputs/logs" # 日志输出目录（相对项目根目录）
+  filename: "app.log"
+
+# 点云加载配置
+pointcloud:
+  bin_dtype: "float32"    # .bin 文件的数据类型
+  bin_cols: 4             # .bin 默认列数（N,4）或（N,5），至少取前3列 xyz
+  default_data_dir: "data" # 默认点云数据目录
+
+# 伪检测器配置
+fake_detector:
+  num_boxes: 3            # 伪造检测框数量
+  score_range: [0.75, 0.99]  # 置信度随机范围
+
+# 伪分割器配置
+fake_segmentor:
+  num_classes: 4          # 语义类别数量
+  # 各类别颜色 [R, G, B]（归一化 0~1）
+  class_colors:
+    0: [0.5, 0.5, 0.5]   # 背景 - 灰色
+    1: [0.2, 0.8, 0.2]   # 植被 - 绿色
+    2: [0.8, 0.2, 0.2]   # 障碍物 - 红色
+    3: [0.2, 0.4, 0.9]   # 地面 - 蓝色
+
+# Open3D 可视化配置
+visualization:
+  window_title: "3D点云感知结果"
+  window_width: 1280
+  window_height: 720
+  background_color: [0.05, 0.05, 0.05]  # 深色背景
+  point_size: 2.0         # 点大小
