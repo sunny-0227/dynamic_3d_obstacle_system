@@ -40,9 +40,11 @@ from app.core.detector.openpcdet_detector import OpenPCDetDetector
 from app.core.segmentor.mmdet3d_segmentor import MMDet3DSegmentor, MMDet3DSegmentorConfig
 from app.core.fusion import FusionResult, run_full_pipeline
 from app.core.pipeline.detect_pipeline import DetectPipeline
+from app.core.pipeline.full_pipeline import FullPipeline
 from app.core.pipeline.segment_pipeline import SegmentPipeline, SegmentPipelineOutput
 from app.io.pointcloud_loader import load_pointcloud
 from app.utils.logger import get_logger
+from app.visualization.scene_renderer import RenderOptions, SceneRenderer
 from app.visualization.open3d_viewer import show_fusion_result, show_pointcloud
 
 logger = get_logger("ui.main_window")
@@ -75,6 +77,10 @@ class MainWindow(QMainWindow):
         self._segment_pipeline: Optional[SegmentPipeline] = None
         self._segmentor: Optional[MMDet3DSegmentor] = None
         self._last_seg_output: Optional[SegmentPipelineOutput] = None
+
+        # 完整 pipeline（里程碑 5：检测+分割+融合+同窗显示）
+        self._full_pipeline: Optional[FullPipeline] = None
+        self._scene_renderer: Optional[SceneRenderer] = None
 
         self._build_ui()
         self._apply_style()
@@ -189,15 +195,24 @@ class MainWindow(QMainWindow):
         self._btn_demo = QPushButton("运行演示")
         self._btn_detect = QPushButton("执行检测")
         self._btn_segment = QPushButton("执行分割")
+        self._btn_fullrun = QPushButton("一键运行")
 
         # 初始状态：加载、演示、检测按钮禁用
         self._btn_load.setEnabled(False)
         self._btn_demo.setEnabled(False)
         self._btn_detect.setEnabled(False)
         self._btn_segment.setEnabled(False)
+        self._btn_fullrun.setEnabled(False)
 
         # 设置按钮最小高度，提升可点击性
-        for btn in (self._btn_select, self._btn_load, self._btn_demo, self._btn_detect, self._btn_segment):
+        for btn in (
+            self._btn_select,
+            self._btn_load,
+            self._btn_demo,
+            self._btn_detect,
+            self._btn_segment,
+            self._btn_fullrun,
+        ):
             btn.setMinimumHeight(40)
             btn_layout.addWidget(btn)
 
@@ -230,6 +245,7 @@ class MainWindow(QMainWindow):
         self._btn_demo.clicked.connect(self._on_run_demo)
         self._btn_detect.clicked.connect(self._on_execute_detection)
         self._btn_segment.clicked.connect(self._on_execute_segmentation)
+        self._btn_fullrun.clicked.connect(self._on_run_full_fusion)
 
         self._btn_nusc_root.clicked.connect(self._on_nusc_select_root)
         self._btn_nusc_connect.clicked.connect(self._on_nusc_connect)
@@ -249,7 +265,7 @@ class MainWindow(QMainWindow):
             QWidget {
                 background-color: #1e1e2e;
                 color: #cdd6f4;
-                font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+                font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
                 font-size: 13px;
             }
             QGroupBox {
@@ -316,6 +332,7 @@ class MainWindow(QMainWindow):
             self._btn_demo,
             self._btn_detect,
             self._btn_segment,
+            self._btn_fullrun,
             self._btn_nusc_root,
             self._btn_nusc_connect,
             self._combo_nusc_mode,
@@ -363,6 +380,7 @@ class MainWindow(QMainWindow):
             self._btn_demo.setEnabled(True)
             self._btn_detect.setEnabled(True)
             self._btn_segment.setEnabled(True)
+            self._btn_fullrun.setEnabled(True)
 
     # --------------------------------------------------
     # nuScenes：配置中的固定根目录 / 启动时自动连接
@@ -623,6 +641,7 @@ class MainWindow(QMainWindow):
             self._btn_demo.setEnabled(True)
             self._btn_detect.setEnabled(True)
             self._btn_segment.setEnabled(True)
+            self._btn_fullrun.setEnabled(True)
             self._btn_load.setEnabled(True)
             self._status_bar.showMessage(
                 f"已加载 nuScenes 帧 {idx + 1}/{record.frame_count}"
@@ -663,6 +682,7 @@ class MainWindow(QMainWindow):
         self._btn_demo.setEnabled(False)
         self._btn_detect.setEnabled(False)
         self._btn_segment.setEnabled(False)
+        self._btn_fullrun.setEnabled(False)
 
         self._file_label.setText(str(self._current_file))
         self._log(f"已选择文件: {self._current_file}")
@@ -689,6 +709,7 @@ class MainWindow(QMainWindow):
             self._btn_demo.setEnabled(True)
             self._btn_detect.setEnabled(True)
             self._btn_segment.setEnabled(True)
+            self._btn_fullrun.setEnabled(True)
 
             # 加载后立即弹窗预览原始点云
             self._log("正在打开 Open3D 预览窗口（关闭窗口后可继续操作）...")
@@ -755,38 +776,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "警告", "请先加载点云（或加载 nuScenes 帧点云）！")
             return
 
-        if self._detector_pipeline is None:
-            # 从配置加载检测器参数（当前主要用于占位 fallback，真实接入后可在 OpenPCDetDetector 内实现）
-            det_cfg = self._config.get("detector", {})
-            score_threshold = det_cfg.get("score_threshold", 0.1)
-            num_boxes_fake = det_cfg.get("num_boxes_fake", 3)
-            class_names = det_cfg.get("class_names", ["car", "pedestrian", "cyclist"])
-
-            openpcdet_cfg = det_cfg.get("openpcdet", {})
-            model_cfg_raw = openpcdet_cfg.get("model_cfg", "") or ""
-            ckpt_raw = openpcdet_cfg.get("checkpoint_path", "") or ""
-            device = openpcdet_cfg.get("device", "cpu")
-
-            def _resolve_maybe_relative(p: str) -> Optional[Path]:
-                if not p or not str(p).strip():
-                    return None
-                pp = Path(str(p).strip())
-                if not pp.is_absolute():
-                    pp = self._project_root / pp
-                return pp
-
-            model_cfg_path = _resolve_maybe_relative(model_cfg_raw)
-            checkpoint_path = _resolve_maybe_relative(ckpt_raw)
-
-            self._detector = OpenPCDetDetector(
-                model_cfg_path=model_cfg_path,
-                checkpoint_path=checkpoint_path,
-                device=device,
-                score_threshold=score_threshold,
-                num_boxes_fake=num_boxes_fake,
-                class_names=class_names,
-            )
-            self._detector_pipeline = DetectPipeline(detector=self._detector)
+        self._ensure_detector_pipeline()
 
         # 检测期间禁用按钮，避免重复点击
         self._btn_detect.setEnabled(False)
@@ -823,30 +813,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "警告", "请先加载点云（或加载 nuScenes 帧点云）！")
             return
 
-        if self._segment_pipeline is None:
-            seg_cfg = self._config.get("segmentor", {})
-            backend = seg_cfg.get("backend", "mmdet3d")
-            if backend != "mmdet3d":
-                logger.warning("未知分割后端 %s，当前仅提供 mmdet3d 占位封装，已继续使用 mmdet3d。", backend)
-
-            mmd = seg_cfg.get("mmdet3d", {})
-            num_classes = int(seg_cfg.get("num_classes", 4))
-            class_names = seg_cfg.get("class_names", None)
-            palette = seg_cfg.get("palette", None)
-            if palette is None:
-                # 尝试复用里程碑1的假分割颜色配置，若存在
-                palette = self._config.get("fake_segmentor", {}).get("class_colors", None)
-
-            cfg_obj = MMDet3DSegmentorConfig(
-                config_file=str(mmd.get("config_file", "") or ""),
-                checkpoint_file=str(mmd.get("checkpoint_file", "") or ""),
-                device=str(mmd.get("device", "cpu") or "cpu"),
-                num_classes=num_classes,
-                class_names=class_names,
-                palette=palette,
-            )
-            self._segmentor = MMDet3DSegmentor(cfg_obj)
-            self._segment_pipeline = SegmentPipeline(segmentor=self._segmentor)
+        self._ensure_segment_pipeline()
 
         self._btn_segment.setEnabled(False)
         QApplication.processEvents()
@@ -879,6 +846,128 @@ class MainWindow(QMainWindow):
             self._status_bar.showMessage("分割失败")
         finally:
             self._btn_segment.setEnabled(self._loaded_pcd is not None)
+
+    def _on_run_full_fusion(self) -> None:
+        """一键运行：分割 + 检测 + 坐标融合 + 同窗显示（里程碑 5）。"""
+        if self._loaded_pcd is None:
+            QMessageBox.warning(self, "警告", "请先加载点云（或加载 nuScenes 帧点云）！")
+            return
+
+        self._ensure_detector_pipeline()
+        self._ensure_segment_pipeline()
+
+        if self._full_pipeline is None:
+            self._full_pipeline = FullPipeline(
+                detect_pipeline=self._detector_pipeline,
+                segment_pipeline=self._segment_pipeline,
+            )
+
+        if self._scene_renderer is None:
+            vis_cfg = self._config.get("visualization", {})
+            self._scene_renderer = SceneRenderer(
+                RenderOptions(
+                    window_title=vis_cfg.get("window_title", "融合显示（点云+分割+检测框）"),
+                    width=int(vis_cfg.get("window_width", 1280)),
+                    height=int(vis_cfg.get("window_height", 720)),
+                    background_color=vis_cfg.get("background_color", [0.05, 0.05, 0.05]),
+                    point_size=float(vis_cfg.get("point_size", 2.0)),
+                    show_coordinate_frame=True,
+                )
+            )
+
+        self._btn_fullrun.setEnabled(False)
+        QApplication.processEvents()
+
+        try:
+            points_xyz = np.asarray(self._loaded_pcd.points, dtype=np.float32)
+            self._log("开始一键运行（分割 + 检测 + 融合显示）...")
+            self._status_bar.showMessage("一键运行中...")
+
+            scene = self._full_pipeline.run(points_xyz)
+            self._status_bar.showMessage("一键运行完成，Open3D 窗口已打开")
+            self._log("正在打开 Open3D 融合视窗（关闭窗口后可继续操作）...")
+
+            # 打开 Open3D 前禁用控件，避免重复点击
+            self._set_actions_enabled(False)
+            QApplication.processEvents()
+            try:
+                self._scene_renderer.render(scene)
+            finally:
+                self._set_actions_enabled(True)
+        except Exception as exc:
+            logger.error("一键运行失败: %s", exc, exc_info=True)
+            QMessageBox.critical(self, "运行失败", f"一键运行时发生错误：\n{exc}")
+            self._status_bar.showMessage("一键运行失败")
+        finally:
+            self._btn_fullrun.setEnabled(self._loaded_pcd is not None)
+
+    # --------------------------------------------------
+    # 懒加载辅助：保证 pipeline 初始化一致
+    # --------------------------------------------------
+    def _ensure_detector_pipeline(self) -> None:
+        if self._detector_pipeline is not None:
+            return
+
+        det_cfg = self._config.get("detector", {})
+        score_threshold = det_cfg.get("score_threshold", 0.1)
+        num_boxes_fake = det_cfg.get("num_boxes_fake", 3)
+        class_names = det_cfg.get("class_names", ["car", "pedestrian", "cyclist"])
+
+        openpcdet_cfg = det_cfg.get("openpcdet", {})
+        model_cfg_raw = openpcdet_cfg.get("model_cfg", "") or ""
+        ckpt_raw = openpcdet_cfg.get("checkpoint_path", "") or ""
+        device = openpcdet_cfg.get("device", "cpu")
+
+        def _resolve_maybe_relative(p: str) -> Optional[Path]:
+            if not p or not str(p).strip():
+                return None
+            pp = Path(str(p).strip())
+            if not pp.is_absolute():
+                pp = self._project_root / pp
+            return pp
+
+        model_cfg_path = _resolve_maybe_relative(model_cfg_raw)
+        checkpoint_path = _resolve_maybe_relative(ckpt_raw)
+
+        self._detector = OpenPCDetDetector(
+            model_cfg_path=model_cfg_path,
+            checkpoint_path=checkpoint_path,
+            device=device,
+            score_threshold=score_threshold,
+            num_boxes_fake=num_boxes_fake,
+            class_names=class_names,
+        )
+        self._detector_pipeline = DetectPipeline(detector=self._detector)
+
+    def _ensure_segment_pipeline(self) -> None:
+        if self._segment_pipeline is not None:
+            return
+
+        seg_cfg = self._config.get("segmentor", {})
+        backend = seg_cfg.get("backend", "mmdet3d")
+        if backend != "mmdet3d":
+            logger.warning(
+                "未知分割后端 %s，当前仅提供 mmdet3d 占位封装，已继续使用 mmdet3d。",
+                backend,
+            )
+
+        mmd = seg_cfg.get("mmdet3d", {})
+        num_classes = int(seg_cfg.get("num_classes", 4))
+        class_names = seg_cfg.get("class_names", None)
+        palette = seg_cfg.get("palette", None)
+        if palette is None:
+            palette = self._config.get("fake_segmentor", {}).get("class_colors", None)
+
+        cfg_obj = MMDet3DSegmentorConfig(
+            config_file=str(mmd.get("config_file", "") or ""),
+            checkpoint_file=str(mmd.get("checkpoint_file", "") or ""),
+            device=str(mmd.get("device", "cpu") or "cpu"),
+            num_classes=num_classes,
+            class_names=class_names,
+            palette=palette,
+        )
+        self._segmentor = MMDet3DSegmentor(cfg_obj)
+        self._segment_pipeline = SegmentPipeline(segmentor=self._segmentor)
 
     def _launch_viewer(self, mode: str) -> None:
         """

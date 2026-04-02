@@ -19,6 +19,8 @@ logger = get_logger("core.pipeline.segment_pipeline")
 
 @dataclass(frozen=True)
 class SegmentPipelineOutput:
+    # 分割时实际使用的点（用于保证 labels 与点集一一对应，避免后续真实模型下采样导致错位）
+    points_xyz: np.ndarray  # (N,3) float32
     seg: SegmentationResult
     colored_pcd: Optional[object]  # Open3D PointCloud（若可用）
 
@@ -29,16 +31,18 @@ class SegmentPipeline:
         self._colorizer = colorizer or SegColorizer()
 
     def run(self, input_data: SegmentInput) -> SegmentPipelineOutput:
-        seg = self._segmentor.segment(input_data)
+        # 统一取一次“实际点集”，后续所有输出都围绕该点集，避免错位
+        points = self._segmentor._load_or_sanitize_points(input_data)  # (N,K)
+        points_xyz = np.asarray(points[:, :3], dtype=np.float32)
+        seg = self._segmentor._segment_impl(points)
 
         # 尝试生成 Open3D 彩色点云（若 open3d 不可用则返回 None）
         colored_pcd = None
         try:
-            points = self._segmentor._load_or_sanitize_points(input_data)  # 复用规范化逻辑
             out = self._colorizer.colorize(points, seg.labels, seg.id_to_color)
             colored_pcd = self._colorizer.to_open3d_pointcloud(out)
         except Exception as e:
             logger.warning("生成 Open3D 彩色点云失败（不影响分割 labels 输出）：%s", e)
 
-        return SegmentPipelineOutput(seg=seg, colored_pcd=colored_pcd)
+        return SegmentPipelineOutput(points_xyz=points_xyz, seg=seg, colored_pcd=colored_pcd)
 

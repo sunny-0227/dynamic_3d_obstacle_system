@@ -13,6 +13,12 @@ GUI 提供“执行检测”按钮调用统一检测 pipeline。
 
 里程碑4：真实/占位语义分割接口接入在 app.core.segmentor + app.core.pipeline 中完成，
 GUI 提供“执行分割”按钮调用统一分割 pipeline。
+
+里程碑5：检测框与分割结果的统一坐标融合：
+  - app.core.geometry.transform 提供 SE(3) 变换（旋转/平移/齐次矩阵）
+  - app.core.fusion.result_fusion 负责输出对齐到同一坐标系的 FusedScene
+  - app.core.pipeline.full_pipeline 提供一键运行入口
+  - app.visualization.scene_renderer 在同一 Open3D 视窗渲染点云+分割+检测框
 """
 
 import sys
@@ -68,7 +74,7 @@ def main() -> None:
         "启动 %s v%s | 阶段: %s",
         app_info.get("name", "动态3D障碍物感知系统"),
         app_info.get("version", "1.0.0"),
-        app_info.get("stage", "phase4_mmdet3d_segment"),
+        app_info.get("stage", "phase5_fusion_fullrun"),
     )
 
     # 3. 创建 PyQt5 应用

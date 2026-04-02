@@ -6,7 +6,7 @@
 app:
   name: "动态3D障碍物感知系统"
   version: "1.0.0"
-  stage: "phase4_mmdet3d_segment"
+  stage: "phase5_fusion_fullrun"
 
 # 日志配置
 logging:
