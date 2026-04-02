@@ -6,7 +6,7 @@
 app:
   name: "动态3D障碍物感知系统"
   version: "1.0.0"
-  stage: "phase1_fake"
+  stage: "phase2_nuscenes_mini"
 
 # 日志配置
 logging:
@@ -17,11 +17,11 @@ logging:
 
 # 点云加载配置
 pointcloud:
-  # 注意：bin_dtype 和 bin_cols 为里程碑2预留字段，当前代码硬编码 float32 / 自动检测4或5列
-  # 修改此处不会影响运行时行为，待里程碑2将配置注入 load_pointcloud 后生效
-  bin_dtype: "float32"    # .bin 文件的数据类型（预留，当前未读取）
-  bin_cols: 4             # .bin 默认列数（预留，当前自动检测 4 或 5 列）
-  default_data_dir: "data" # 默认点云数据目录（GUI 文件选择框初始目录）
+  # bin_dtype / bin_cols 为预留项：当前 load_pointcloud 仍硬编码 float32 并自动识别 4/5 列
+  # 若需从配置注入，可在里程碑3+ 扩展 load_pointcloud(..., config=...)
+  bin_dtype: "float32"    # .bin 数据类型（预留，当前未读取）
+  bin_cols: 4             # .bin 列数（预留，当前自动检测 4 或 5 列）
+  default_data_dir: "data" # 单文件点云：GUI 选择框起始目录（相对项目根）
 
 # 伪检测器配置
 fake_detector:
@@ -37,6 +37,15 @@ fake_segmentor:
     1: [0.2, 0.8, 0.2]   # 植被 - 绿色
     2: [0.8, 0.2, 0.2]   # 障碍物 - 红色
     3: [0.2, 0.4, 0.9]   # 地面 - 蓝色
+
+# nuScenes mini 适配（里程碑2）
+nuscenes:
+  version: "v1.0-mini"           # 元数据子目录名，须与数据集根下文件夹一致
+  # default_dataroot：仅「选择数据集根目录」对话框的起始路径，不会自动当作已选根目录
+  default_dataroot: ""           # 空则起始目录为项目根；可填绝对路径或相对项目根的路径
+  # fixed_dataroot：非空且为有效目录、且存在 {version} 子目录时，启动后自动填入根路径（仍建议点一次「加载数据集」除非开启 auto_connect）
+  fixed_dataroot: ""             # 例: "/path/to/nuscenes" 或相对路径 "data/nuscenes"
+  auto_connect: false            # true 时窗口显示后立即连接数据集（首次启动可能卡顿数秒）
 
 # Open3D 可视化配置
 visualization:

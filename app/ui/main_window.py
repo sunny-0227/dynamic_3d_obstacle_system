@@ -1,20 +1,20 @@
 """
 PyQt5 主窗口模块
 提供简洁的 GUI 界面，包含：
-  - 选择点云文件按钮
-  - 加载点云按钮
-  - 运行演示按钮（伪分割+伪检测+Open3D 弹窗）
+  - 选择点云文件 / 加载 / 运行演示（里程碑1）
+  - nuScenes mini 根目录、导航与当前帧加载（里程碑2）
   - 状态栏和日志信息区域
 Open3D 采用独立弹出窗口方式，不嵌入 Qt。
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QApplication,
+    QComboBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -23,6 +23,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QStatusBar,
     QVBoxLayout,
     QWidget,
@@ -34,6 +35,8 @@ from app.io.pointcloud_loader import load_pointcloud
 from app.core.fusion import run_full_pipeline, FusionResult
 from app.visualization.open3d_viewer import show_pointcloud, show_fusion_result
 from app.utils.logger import get_logger
+from app.datasets.nuscenes_loader import NuScenesMiniLoader
+from app.datasets.nuscenes_parser import NuScenesFrameRecord
 
 logger = get_logger("ui.main_window")
 
@@ -47,12 +50,19 @@ class MainWindow(QMainWindow):
     def __init__(self, config: dict = None):
         super().__init__()
         self._config = config or {}
+        self._project_root = Path(__file__).resolve().parent.parent.parent
         self._current_file: Optional[Path] = None
         self._loaded_pcd: Optional[o3d.geometry.PointCloud] = None
         self._fusion_result: Optional[FusionResult] = None
+        self._last_nusc_record: Optional[NuScenesFrameRecord] = None
+
+        # nuScenes：仅保存根路径与适配器，点云仍走 IO 层
+        self._nusc_dataroot: Optional[Path] = None
+        self._nusc_loader: Optional[NuScenesMiniLoader] = None
 
         self._build_ui()
         self._apply_style()
+        self._apply_nuscenes_config_at_startup()
         logger.info("主窗口初始化完成")
 
     # --------------------------------------------------
@@ -62,7 +72,7 @@ class MainWindow(QMainWindow):
         """构建窗口布局和所有控件。"""
         app_name = self._config.get("app", {}).get("name", "动态3D障碍物感知系统")
         self.setWindowTitle(app_name)
-        self.setMinimumSize(700, 480)
+        self.setMinimumSize(820, 640)
 
         # 中央容器
         central = QWidget()
@@ -80,8 +90,73 @@ class MainWindow(QMainWindow):
         title_label.setFont(title_font)
         root_layout.addWidget(title_label)
 
+        # ---- nuScenes mini ----
+        nusc_group = QGroupBox("nuScenes mini")
+        nusc_layout = QVBoxLayout(nusc_group)
+        nusc_layout.setSpacing(8)
+
+        row_root = QHBoxLayout()
+        self._btn_nusc_root = QPushButton("选择数据集根目录")
+        self._btn_nusc_root.setMinimumHeight(36)
+        self._label_nusc_root = QLabel("未选择")
+        self._label_nusc_root.setWordWrap(True)
+        row_root.addWidget(self._btn_nusc_root)
+        row_root.addWidget(self._label_nusc_root, stretch=1)
+        nusc_layout.addLayout(row_root)
+
+        row_conn = QHBoxLayout()
+        self._btn_nusc_connect = QPushButton("加载数据集")
+        self._btn_nusc_connect.setMinimumHeight(36)
+        self._btn_nusc_connect.setEnabled(False)
+        row_conn.addWidget(self._btn_nusc_connect)
+        row_conn.addStretch()
+        nusc_layout.addLayout(row_conn)
+
+        row_mode = QHBoxLayout()
+        row_mode.addWidget(QLabel("导航方式:"))
+        self._combo_nusc_mode = QComboBox()
+        self._combo_nusc_mode.addItem("全数据集（sample 表顺序，非时间序）", "global")
+        self._combo_nusc_mode.addItem("按场景顺序（时序链）", "scene")
+        self._combo_nusc_mode.setToolTip(
+            "全局：与官方 sample.json 中条目顺序一致，不等于全数据集采集时间线。\n"
+            "场景：沿 first_sample → next 关键帧链，适合单段连续浏览。"
+        )
+        row_mode.addWidget(self._combo_nusc_mode, stretch=1)
+        nusc_layout.addLayout(row_mode)
+
+        row_scene = QHBoxLayout()
+        row_scene.addWidget(QLabel("场景:"))
+        self._combo_nusc_scene = QComboBox()
+        self._combo_nusc_scene.setEnabled(False)
+        row_scene.addWidget(self._combo_nusc_scene, stretch=1)
+        nusc_layout.addLayout(row_scene)
+
+        row_frame = QHBoxLayout()
+        row_frame.addWidget(QLabel("帧索引:"))
+        self._spin_nusc_frame = QSpinBox()
+        self._spin_nusc_frame.setMinimum(0)
+        self._spin_nusc_frame.setMaximum(0)
+        self._spin_nusc_frame.setEnabled(False)
+        row_frame.addWidget(self._spin_nusc_frame)
+        self._btn_nusc_prev = QPushButton("上一帧")
+        self._btn_nusc_next = QPushButton("下一帧")
+        self._btn_nusc_load_frame = QPushButton("加载当前帧点云")
+        for b in (self._btn_nusc_prev, self._btn_nusc_next, self._btn_nusc_load_frame):
+            b.setMinimumHeight(36)
+            b.setEnabled(False)
+        row_frame.addWidget(self._btn_nusc_prev)
+        row_frame.addWidget(self._btn_nusc_next)
+        row_frame.addWidget(self._btn_nusc_load_frame)
+        nusc_layout.addLayout(row_frame)
+
+        self._label_nusc_meta = QLabel("请先选择并加载 nuScenes mini 根目录")
+        self._label_nusc_meta.setWordWrap(True)
+        nusc_layout.addWidget(self._label_nusc_meta)
+
+        root_layout.addWidget(nusc_group)
+
         # ---- 文件信息区 ----
-        file_group = QGroupBox("点云文件")
+        file_group = QGroupBox("点云文件（单文件）")
         file_layout = QHBoxLayout(file_group)
         self._file_label = QLabel("未选择文件")
         self._file_label.setWordWrap(True)
@@ -129,6 +204,15 @@ class MainWindow(QMainWindow):
         self._btn_select.clicked.connect(self._on_select_file)
         self._btn_load.clicked.connect(self._on_load_pointcloud)
         self._btn_demo.clicked.connect(self._on_run_demo)
+
+        self._btn_nusc_root.clicked.connect(self._on_nusc_select_root)
+        self._btn_nusc_connect.clicked.connect(self._on_nusc_connect)
+        self._combo_nusc_mode.currentIndexChanged.connect(self._on_nusc_navigation_changed)
+        self._combo_nusc_scene.currentIndexChanged.connect(self._on_nusc_scene_changed)
+        self._btn_nusc_prev.clicked.connect(self._on_nusc_prev_frame)
+        self._btn_nusc_next.clicked.connect(self._on_nusc_next_frame)
+        self._btn_nusc_load_frame.clicked.connect(self._on_nusc_load_current_frame)
+        self._spin_nusc_frame.valueChanged.connect(lambda _v: self._update_nusc_meta_label())
 
     def _apply_style(self) -> None:
         """应用简洁的深色风格样式表。"""
@@ -186,7 +270,127 @@ class MainWindow(QMainWindow):
             QLabel {
                 color: #cdd6f4;
             }
+            QComboBox, QSpinBox {
+                background-color: #313244;
+                color: #cdd6f4;
+                border: 1px solid #585b70;
+                border-radius: 4px;
+                padding: 4px;
+            }
         """)
+
+    # --------------------------------------------------
+    # 交互控件批量启用/禁用（Open3D 阻塞期间）
+    # --------------------------------------------------
+    def _all_action_widgets(self) -> List[QWidget]:
+        """需要随 Open3D 窗口同步禁用的控件列表。"""
+        return [
+            self._btn_select,
+            self._btn_load,
+            self._btn_demo,
+            self._btn_nusc_root,
+            self._btn_nusc_connect,
+            self._combo_nusc_mode,
+            self._combo_nusc_scene,
+            self._spin_nusc_frame,
+            self._btn_nusc_prev,
+            self._btn_nusc_next,
+            self._btn_nusc_load_frame,
+        ]
+
+    def _set_actions_enabled(self, enabled: bool) -> None:
+        for w in self._all_action_widgets():
+            w.setEnabled(enabled)
+        # 根据业务状态恢复部分逻辑（在 finally 中调用 _restore_action_state）
+        if enabled:
+            self._restore_action_state()
+
+    def _restore_action_state(self) -> None:
+        """Open3D 关闭后，按当前数据状态恢复按钮可用性。"""
+        self._btn_select.setEnabled(True)
+
+        self._btn_nusc_root.setEnabled(True)
+        self._btn_nusc_connect.setEnabled(self._nusc_dataroot is not None)
+
+        if self._nusc_loader is not None and self._nusc_loader.is_connected:
+            self._combo_nusc_mode.setEnabled(True)
+            mode = self._combo_nusc_mode.currentData()
+            self._combo_nusc_scene.setEnabled(mode == "scene")
+            n = self._nusc_loader.frame_count
+            self._spin_nusc_frame.setEnabled(n > 0)
+            self._btn_nusc_prev.setEnabled(n > 0)
+            self._btn_nusc_next.setEnabled(n > 0)
+            self._btn_nusc_load_frame.setEnabled(n > 0)
+        else:
+            self._combo_nusc_mode.setEnabled(False)
+            self._combo_nusc_scene.setEnabled(False)
+            self._spin_nusc_frame.setEnabled(False)
+            self._btn_nusc_prev.setEnabled(False)
+            self._btn_nusc_next.setEnabled(False)
+            self._btn_nusc_load_frame.setEnabled(False)
+
+        if self._current_file is not None:
+            self._btn_load.setEnabled(True)
+        if self._loaded_pcd is not None:
+            self._btn_demo.setEnabled(True)
+
+    # --------------------------------------------------
+    # nuScenes：配置中的固定根目录 / 启动时自动连接
+    # --------------------------------------------------
+    def _resolve_path_from_config(self, raw: str) -> Optional[Path]:
+        """将配置中的路径解析为绝对 Path；无效则返回 None。"""
+        if not raw or not str(raw).strip():
+            return None
+        p = Path(str(raw).strip())
+        if not p.is_absolute():
+            p = self._project_root / p
+        try:
+            p = p.resolve()
+        except OSError:
+            return None
+        return p if p.is_dir() else None
+
+    def _apply_nuscenes_config_at_startup(self) -> None:
+        """
+        读取 nuscenes.fixed_dataroot / auto_connect：
+        在存在有效根目录与元数据子目录时预填 UI，可选延迟自动 connect。
+        """
+        nusc_cfg = self._config.get("nuscenes", {})
+        fixed = nusc_cfg.get("fixed_dataroot", "") or ""
+        resolved = self._resolve_path_from_config(fixed)
+        if resolved is None:
+            return
+
+        ver = nusc_cfg.get("version", "v1.0-mini")
+        meta = resolved / ver
+        if not meta.is_dir():
+            logger.warning(
+                "配置 fixed_dataroot 已设置但缺少元数据目录 %s，已跳过自动填入: %s",
+                meta.name,
+                resolved,
+            )
+            return
+
+        self._nusc_dataroot = resolved
+        self._label_nusc_root.setText(str(resolved))
+        self._btn_nusc_connect.setEnabled(True)
+        self._label_nusc_meta.setText(
+            "已从配置读取数据集根目录，请点击「加载数据集」"
+        )
+        self._log(f"已从配置读取 nuScenes 根目录: {resolved}")
+
+        if nusc_cfg.get("auto_connect", False):
+            # 进入事件循环后再连接，避免阻塞窗口构造
+            QTimer.singleShot(0, self._on_nusc_connect)
+
+    def _nusc_dialog_start_dir(self) -> str:
+        """选择根目录对话框的起始路径（default_dataroot，相对路径相对项目根）。"""
+        nusc_cfg = self._config.get("nuscenes", {})
+        hint = nusc_cfg.get("default_dataroot", "") or ""
+        if not str(hint).strip():
+            return str(self._project_root)
+        p = self._resolve_path_from_config(hint)
+        return str(p) if p is not None else str(self._project_root)
 
     # --------------------------------------------------
     # 日志辅助
@@ -197,12 +401,206 @@ class MainWindow(QMainWindow):
         logger.info(message)
 
     # --------------------------------------------------
+    # nuScenes 槽函数
+    # --------------------------------------------------
+    def _on_nusc_select_root(self) -> None:
+        """选择 nuScenes 数据集根目录（包含 samples、maps、v1.0-mini 等）。"""
+        default_dir = self._nusc_dialog_start_dir()
+
+        picked = QFileDialog.getExistingDirectory(
+            self,
+            "选择 nuScenes mini 数据集根目录",
+            default_dir,
+        )
+        if not picked:
+            self._log("已取消选择 nuScenes 根目录")
+            return
+
+        self._nusc_dataroot = Path(picked)
+        self._nusc_loader = None
+        self._label_nusc_root.setText(str(self._nusc_dataroot))
+        self._btn_nusc_connect.setEnabled(True)
+        self._combo_nusc_scene.clear()
+        self._spin_nusc_frame.setMaximum(0)
+        self._label_nusc_meta.setText("已选择根目录，请点击「加载数据集」")
+        self._log(f"nuScenes 根目录: {self._nusc_dataroot}")
+        self._status_bar.showMessage("已选择 nuScenes 根目录")
+
+    def _on_nusc_connect(self) -> None:
+        """实例化 NuScenes 并填充场景下拉框。"""
+        if self._nusc_dataroot is None:
+            QMessageBox.warning(self, "提示", "请先选择数据集根目录")
+            return
+
+        ver = self._config.get("nuscenes", {}).get("version", "v1.0-mini")
+        self._status_bar.showMessage("正在连接 nuScenes ...")
+        self.repaint()
+        QApplication.processEvents()
+
+        try:
+            loader = NuScenesMiniLoader(self._nusc_dataroot, version=ver)
+            loader.connect()
+            self._nusc_loader = loader
+        except ImportError as exc:
+            logger.error("nuScenes 依赖缺失: %s", exc)
+            QMessageBox.critical(
+                self,
+                "依赖缺失",
+                "未安装 nuscenes-devkit。\n请执行：pip install nuscenes-devkit",
+            )
+            self._status_bar.showMessage("连接失败")
+            return
+        except Exception as exc:
+            logger.error("连接 nuScenes 失败: %s", exc, exc_info=True)
+            QMessageBox.critical(self, "连接失败", f"无法加载数据集：\n{exc}")
+            self._status_bar.showMessage("连接失败")
+            return
+
+        self._combo_nusc_scene.blockSignals(True)
+        self._combo_nusc_scene.clear()
+        for s in self._nusc_loader.get_scene_summaries():
+            self._combo_nusc_scene.addItem(s["name"], s["token"])
+        self._combo_nusc_scene.blockSignals(False)
+
+        self._log(f"nuScenes 连接成功 | version={ver} | 场景数={self._combo_nusc_scene.count()}")
+        self._on_nusc_navigation_changed()
+        self._status_bar.showMessage("nuScenes 已连接")
+
+    def _current_nusc_scene_token(self) -> Optional[str]:
+        if self._combo_nusc_scene.count() == 0:
+            return None
+        return self._combo_nusc_scene.currentData()
+
+    def _on_nusc_navigation_changed(self) -> None:
+        """切换全局/场景导航并重建帧列表。"""
+        if self._nusc_loader is None or not self._nusc_loader.is_connected:
+            return
+
+        mode = self._combo_nusc_mode.currentData()
+        try:
+            if mode == "global":
+                self._combo_nusc_scene.setEnabled(False)
+                self._nusc_loader.set_navigation("global")
+            else:
+                self._combo_nusc_scene.setEnabled(True)
+                stok = self._current_nusc_scene_token()
+                if stok is None:
+                    self._log("无可用场景")
+                    return
+                self._nusc_loader.set_navigation("scene", scene_token=stok)
+        except Exception as exc:
+            logger.error("重建导航失败: %s", exc, exc_info=True)
+            QMessageBox.critical(self, "错误", f"导航切换失败：\n{exc}")
+            return
+
+        n = self._nusc_loader.frame_count
+        self._spin_nusc_frame.blockSignals(True)
+        self._spin_nusc_frame.setMaximum(max(0, n - 1))
+        self._spin_nusc_frame.setValue(0)
+        self._spin_nusc_frame.setEnabled(n > 0)
+        self._spin_nusc_frame.blockSignals(False)
+        self._btn_nusc_prev.setEnabled(n > 0)
+        self._btn_nusc_next.setEnabled(n > 0)
+        self._btn_nusc_load_frame.setEnabled(n > 0)
+        self._update_nusc_meta_label()
+
+    def _on_nusc_scene_changed(self) -> None:
+        """场景下拉变更时，仅在「按场景」模式下重建列表。"""
+        if self._combo_nusc_mode.currentData() != "scene":
+            return
+        self._on_nusc_navigation_changed()
+
+    def _on_nusc_prev_frame(self) -> None:
+        v = self._spin_nusc_frame.value()
+        if v > self._spin_nusc_frame.minimum():
+            self._spin_nusc_frame.setValue(v - 1)
+        self._update_nusc_meta_label()
+
+    def _on_nusc_next_frame(self) -> None:
+        v = self._spin_nusc_frame.value()
+        if v < self._spin_nusc_frame.maximum():
+            self._spin_nusc_frame.setValue(v + 1)
+        self._update_nusc_meta_label()
+
+    def _update_nusc_meta_label(self) -> None:
+        if self._nusc_loader is None or not self._nusc_loader.is_connected:
+            self._label_nusc_meta.setText("未连接数据集")
+            return
+        n = self._nusc_loader.frame_count
+        if n <= 0:
+            self._label_nusc_meta.setText("当前导航下无帧")
+            return
+        idx = self._spin_nusc_frame.value()
+        try:
+            rec = self._nusc_loader.get_frame_record(idx)
+        except Exception:
+            self._label_nusc_meta.setText(f"帧 {idx + 1}/{n}（元数据解析失败）")
+            return
+        self._label_nusc_meta.setText(
+            f"帧 {idx + 1}/{n} | 场景: {rec.scene_name} | sample: {rec.sample_token[:8]}... | LiDAR: {rec.lidar_path.name}"
+        )
+
+    def _on_nusc_load_current_frame(self) -> None:
+        """从数据集层取统一帧描述，经 IO 层加载点云并预览。"""
+        if self._nusc_loader is None or not self._nusc_loader.is_connected:
+            QMessageBox.warning(self, "提示", "请先加载数据集")
+            return
+
+        idx = self._spin_nusc_frame.value()
+        try:
+            record = self._nusc_loader.get_frame_record(idx)
+        except Exception as exc:
+            logger.error("获取帧记录失败: %s", exc, exc_info=True)
+            QMessageBox.critical(self, "错误", f"无法获取当前帧：\n{exc}")
+            return
+
+        self._last_nusc_record = record
+        self._fusion_result = None
+        self._current_file = record.lidar_path
+
+        # 日志与界面一致：第 i 帧 / 共 N 帧（1-based / 总数）
+        cur_1based = record.frame_index + 1
+        self._log(
+            f"加载 nuScenes 帧 | 模式={record.navigation_mode} | "
+            f"{record.scene_name} | 第 {cur_1based}/{record.frame_count} 帧"
+        )
+        self._log(f"LiDAR 路径: {record.lidar_path}")
+        self._status_bar.showMessage("正在加载 LiDAR ...")
+        self.repaint()
+
+        if not record.lidar_path.is_file():
+            QMessageBox.critical(
+                self,
+                "文件缺失",
+                f"点云文件不存在：\n{record.lidar_path}\n请确认已下载对应样本。",
+            )
+            self._status_bar.showMessage("文件缺失")
+            return
+
+        try:
+            self._loaded_pcd = load_pointcloud(record.lidar_path)
+            n_pts = len(self._loaded_pcd.points)
+            self._file_label.setText(str(record.lidar_path))
+            self._log(f"加载成功！点云共 {n_pts:,} 个点")
+            self._btn_demo.setEnabled(True)
+            self._btn_load.setEnabled(True)
+            self._status_bar.showMessage(
+                f"已加载 nuScenes 帧 {idx + 1}/{record.frame_count}"
+            )
+            self._log("正在打开 Open3D 预览窗口（关闭窗口后可继续操作）...")
+            self._launch_viewer("raw")
+        except Exception as exc:
+            logger.error("加载 nuScenes 点云失败: %s", exc, exc_info=True)
+            QMessageBox.critical(self, "加载失败", f"加载点云时发生错误：\n{exc}")
+            self._status_bar.showMessage("加载失败")
+
+    # --------------------------------------------------
     # 槽函数：选择文件
     # --------------------------------------------------
     def _on_select_file(self) -> None:
         """弹出文件对话框，让用户选择 .bin 或 .pcd 文件。"""
         default_dir = str(
-            Path(__file__).resolve().parent.parent.parent
+            self._project_root
             / self._config.get("pointcloud", {}).get("default_data_dir", "data")
         )
         file_path, _ = QFileDialog.getOpenFileName(
@@ -219,13 +617,13 @@ class MainWindow(QMainWindow):
         self._current_file = Path(file_path)
         self._loaded_pcd = None
         self._fusion_result = None
+        self._last_nusc_record = None
         self._btn_load.setEnabled(True)
         self._btn_demo.setEnabled(False)
 
-        display_path = self._current_file.name
         self._file_label.setText(str(self._current_file))
         self._log(f"已选择文件: {self._current_file}")
-        self._status_bar.showMessage(f"已选择: {display_path}")
+        self._status_bar.showMessage(f"已选择: {self._current_file.name}")
 
     # --------------------------------------------------
     # 槽函数：加载点云
@@ -320,11 +718,8 @@ class MainWindow(QMainWindow):
         ps = vis_cfg.get("point_size", 2.0)
         title = vis_cfg.get("window_title", "3D点云感知结果")
 
-        # 打开窗口前禁用按钮，防止用户在窗口打开期间重复点击
-        self._btn_select.setEnabled(False)
-        self._btn_load.setEnabled(False)
-        self._btn_demo.setEnabled(False)
-        # 强制刷新 Qt 界面，让按钮禁用状态立即生效
+        # 打开窗口前禁用所有操作控件，防止重复点击
+        self._set_actions_enabled(False)
         QApplication.processEvents()
 
         try:
@@ -348,11 +743,7 @@ class MainWindow(QMainWindow):
             logger.error("Open3D 渲染错误: %s", exc, exc_info=True)
             QMessageBox.critical(self, "渲染错误", f"Open3D 窗口发生错误：\n{exc}")
         finally:
-            # 窗口关闭后恢复按钮状态
-            self._btn_select.setEnabled(True)
-            if self._current_file:
-                self._btn_load.setEnabled(True)
-            if self._loaded_pcd is not None:
-                self._btn_demo.setEnabled(True)
+            self._set_actions_enabled(True)
             self._status_bar.showMessage("就绪")
             self._log("Open3D 窗口已关闭，可继续操作")
+            self._update_nusc_meta_label()

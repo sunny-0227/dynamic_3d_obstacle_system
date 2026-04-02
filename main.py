@@ -4,6 +4,9 @@
   1. 解析配置文件（config/settings.yaml）
   2. 初始化日志系统
   3. 启动 PyQt5 GUI 主窗口
+
+里程碑2：nuScenes mini 适配在 GUI 中完成；数据集逻辑位于 app.datasets，
+点云加载仍由 app.io.pointcloud_loader 完成，与算法层解耦。
 """
 
 import sys
