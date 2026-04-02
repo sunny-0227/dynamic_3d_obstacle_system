@@ -19,6 +19,11 @@ GUI 提供“执行分割”按钮调用统一分割 pipeline。
   - app.core.fusion.result_fusion 负责输出对齐到同一坐标系的 FusedScene
   - app.core.pipeline.full_pipeline 提供一键运行入口
   - app.visualization.scene_renderer 在同一 Open3D 视窗渲染点云+分割+检测框
+
+里程碑6：答辩演示版 GUI 完善：
+  - app.ui.controller：控制器 + 后台线程任务
+  - app.ui.widgets.*：控制面板/日志面板/状态栏
+  - app.ui.main_window：主窗口装配
 """
 
 import sys
