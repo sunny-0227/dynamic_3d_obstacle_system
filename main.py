@@ -10,6 +10,9 @@
 
 里程碑3：真实/占位检测接口接入在 app.core.detector + app.core.pipeline 中完成，
 GUI 提供“执行检测”按钮调用统一检测 pipeline。
+
+里程碑4：真实/占位语义分割接口接入在 app.core.segmentor + app.core.pipeline 中完成，
+GUI 提供“执行分割”按钮调用统一分割 pipeline。
 """
 
 import sys
@@ -65,7 +68,7 @@ def main() -> None:
         "启动 %s v%s | 阶段: %s",
         app_info.get("name", "动态3D障碍物感知系统"),
         app_info.get("version", "1.0.0"),
-        app_info.get("stage", "phase3_openpcdet_detect"),
+        app_info.get("stage", "phase4_mmdet3d_segment"),
     )
 
     # 3. 创建 PyQt5 应用

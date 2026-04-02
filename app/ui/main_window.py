@@ -4,6 +4,7 @@ PyQt5 主窗口模块
   - 选择点云文件 / 加载 / 运行演示（里程碑1）
   - nuScenes mini 根目录、导航与当前帧加载（里程碑2）
   - 执行检测（里程碑3：OpenPCDet 接口封装/占位实现）
+  - 执行分割（里程碑4：MMDet3D 接口封装/占位实现）
   - 状态栏和日志信息区域
 Open3D 采用独立弹出窗口方式，不嵌入 Qt。
 """
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QFontDatabase
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
@@ -36,8 +37,10 @@ import open3d as o3d
 from app.datasets.nuscenes_loader import NuScenesMiniLoader
 from app.datasets.nuscenes_parser import NuScenesFrameRecord
 from app.core.detector.openpcdet_detector import OpenPCDetDetector
+from app.core.segmentor.mmdet3d_segmentor import MMDet3DSegmentor, MMDet3DSegmentorConfig
 from app.core.fusion import FusionResult, run_full_pipeline
 from app.core.pipeline.detect_pipeline import DetectPipeline
+from app.core.pipeline.segment_pipeline import SegmentPipeline, SegmentPipelineOutput
 from app.io.pointcloud_loader import load_pointcloud
 from app.utils.logger import get_logger
 from app.visualization.open3d_viewer import show_fusion_result, show_pointcloud
@@ -67,6 +70,11 @@ class MainWindow(QMainWindow):
         self._detector_pipeline: Optional[DetectPipeline] = None
         self._detector: Optional[OpenPCDetDetector] = None
         self._last_detections = None  # 里程碑3：保存最近一次 DetectionBox 列表
+
+        # 分割 pipeline（懒加载）
+        self._segment_pipeline: Optional[SegmentPipeline] = None
+        self._segmentor: Optional[MMDet3DSegmentor] = None
+        self._last_seg_output: Optional[SegmentPipelineOutput] = None
 
         self._build_ui()
         self._apply_style()
@@ -180,14 +188,16 @@ class MainWindow(QMainWindow):
         self._btn_load = QPushButton("加载点云")
         self._btn_demo = QPushButton("运行演示")
         self._btn_detect = QPushButton("执行检测")
+        self._btn_segment = QPushButton("执行分割")
 
         # 初始状态：加载、演示、检测按钮禁用
         self._btn_load.setEnabled(False)
         self._btn_demo.setEnabled(False)
         self._btn_detect.setEnabled(False)
+        self._btn_segment.setEnabled(False)
 
         # 设置按钮最小高度，提升可点击性
-        for btn in (self._btn_select, self._btn_load, self._btn_demo, self._btn_detect):
+        for btn in (self._btn_select, self._btn_load, self._btn_demo, self._btn_detect, self._btn_segment):
             btn.setMinimumHeight(40)
             btn_layout.addWidget(btn)
 
@@ -200,7 +210,11 @@ class MainWindow(QMainWindow):
         self._log_area.setReadOnly(True)
         self._log_area.setMaximumBlockCount(200)   # 最多保留 200 行
         self._log_area.setMinimumHeight(160)
-        mono_font = QFont("Consolas", 9)
+        mono_font = QFontDatabase.systemFont(QFontDatabase.FixedFont)
+        if not mono_font or mono_font.family() == "":
+            mono_font = QFont("Consolas", 9)
+        else:
+            mono_font.setPointSize(9)
         self._log_area.setFont(mono_font)
         info_layout.addWidget(self._log_area)
         root_layout.addWidget(info_group, stretch=1)
@@ -215,6 +229,7 @@ class MainWindow(QMainWindow):
         self._btn_load.clicked.connect(self._on_load_pointcloud)
         self._btn_demo.clicked.connect(self._on_run_demo)
         self._btn_detect.clicked.connect(self._on_execute_detection)
+        self._btn_segment.clicked.connect(self._on_execute_segmentation)
 
         self._btn_nusc_root.clicked.connect(self._on_nusc_select_root)
         self._btn_nusc_connect.clicked.connect(self._on_nusc_connect)
@@ -300,6 +315,7 @@ class MainWindow(QMainWindow):
             self._btn_load,
             self._btn_demo,
             self._btn_detect,
+            self._btn_segment,
             self._btn_nusc_root,
             self._btn_nusc_connect,
             self._combo_nusc_mode,
@@ -346,6 +362,7 @@ class MainWindow(QMainWindow):
         if self._loaded_pcd is not None:
             self._btn_demo.setEnabled(True)
             self._btn_detect.setEnabled(True)
+            self._btn_segment.setEnabled(True)
 
     # --------------------------------------------------
     # nuScenes：配置中的固定根目录 / 启动时自动连接
@@ -576,6 +593,7 @@ class MainWindow(QMainWindow):
 
         self._last_nusc_record = record
         self._fusion_result = None
+        self._last_seg_output = None
         self._current_file = record.lidar_path
 
         # 日志与界面一致：第 i 帧 / 共 N 帧（1-based / 总数）
@@ -604,6 +622,7 @@ class MainWindow(QMainWindow):
             self._log(f"加载成功！点云共 {n_pts:,} 个点")
             self._btn_demo.setEnabled(True)
             self._btn_detect.setEnabled(True)
+            self._btn_segment.setEnabled(True)
             self._btn_load.setEnabled(True)
             self._status_bar.showMessage(
                 f"已加载 nuScenes 帧 {idx + 1}/{record.frame_count}"
@@ -638,10 +657,12 @@ class MainWindow(QMainWindow):
         self._current_file = Path(file_path)
         self._loaded_pcd = None
         self._fusion_result = None
+        self._last_seg_output = None
         self._last_nusc_record = None
         self._btn_load.setEnabled(True)
         self._btn_demo.setEnabled(False)
         self._btn_detect.setEnabled(False)
+        self._btn_segment.setEnabled(False)
 
         self._file_label.setText(str(self._current_file))
         self._log(f"已选择文件: {self._current_file}")
@@ -667,6 +688,7 @@ class MainWindow(QMainWindow):
             self._status_bar.showMessage(f"已加载 {n_pts:,} 个点")
             self._btn_demo.setEnabled(True)
             self._btn_detect.setEnabled(True)
+            self._btn_segment.setEnabled(True)
 
             # 加载后立即弹窗预览原始点云
             self._log("正在打开 Open3D 预览窗口（关闭窗口后可继续操作）...")
@@ -795,6 +817,69 @@ class MainWindow(QMainWindow):
             # 恢复按钮可用性（只要点云存在即可执行）
             self._btn_detect.setEnabled(self._loaded_pcd is not None)
 
+    def _on_execute_segmentation(self) -> None:
+        """对当前加载的点云执行真实/占位语义分割（里程碑 4）。"""
+        if self._loaded_pcd is None:
+            QMessageBox.warning(self, "警告", "请先加载点云（或加载 nuScenes 帧点云）！")
+            return
+
+        if self._segment_pipeline is None:
+            seg_cfg = self._config.get("segmentor", {})
+            backend = seg_cfg.get("backend", "mmdet3d")
+            if backend != "mmdet3d":
+                logger.warning("未知分割后端 %s，当前仅提供 mmdet3d 占位封装，已继续使用 mmdet3d。", backend)
+
+            mmd = seg_cfg.get("mmdet3d", {})
+            num_classes = int(seg_cfg.get("num_classes", 4))
+            class_names = seg_cfg.get("class_names", None)
+            palette = seg_cfg.get("palette", None)
+            if palette is None:
+                # 尝试复用里程碑1的假分割颜色配置，若存在
+                palette = self._config.get("fake_segmentor", {}).get("class_colors", None)
+
+            cfg_obj = MMDet3DSegmentorConfig(
+                config_file=str(mmd.get("config_file", "") or ""),
+                checkpoint_file=str(mmd.get("checkpoint_file", "") or ""),
+                device=str(mmd.get("device", "cpu") or "cpu"),
+                num_classes=num_classes,
+                class_names=class_names,
+                palette=palette,
+            )
+            self._segmentor = MMDet3DSegmentor(cfg_obj)
+            self._segment_pipeline = SegmentPipeline(segmentor=self._segmentor)
+
+        self._btn_segment.setEnabled(False)
+        QApplication.processEvents()
+
+        try:
+            points_xyz = np.asarray(self._loaded_pcd.points, dtype=np.float32)
+            self._log("开始执行分割（里程碑 4：统一接口）...")
+            self._status_bar.showMessage("分割中...")
+
+            out = self._segment_pipeline.run(points_xyz)
+            self._last_seg_output = out
+
+            # 输出简单摘要
+            labels = out.seg.labels
+            uniq, cnt = np.unique(labels, return_counts=True) if labels.size > 0 else ([], [])
+            self._log(f"分割完成！共 {labels.shape[0]:,} 个点，类别统计：")
+            for lid, c in zip(list(uniq), list(cnt)):
+                name = out.seg.id_to_name.get(int(lid), f"class_{int(lid)}")
+                self._log(f"  - id={int(lid):2d} | {name:12s} | 点数={int(c):,}")
+
+            if out.colored_pcd is not None:
+                self._log("正在打开 Open3D 分割彩色点云窗口（关闭窗口后可继续操作）...")
+                self._status_bar.showMessage("分割完成，Open3D 窗口已打开")
+                self._launch_viewer("seg")
+            else:
+                self._status_bar.showMessage("分割完成（未生成 Open3D 彩色点云）")
+        except Exception as exc:
+            logger.error("执行分割失败: %s", exc, exc_info=True)
+            QMessageBox.critical(self, "分割失败", f"执行分割时发生错误：\n{exc}")
+            self._status_bar.showMessage("分割失败")
+        finally:
+            self._btn_segment.setEnabled(self._loaded_pcd is not None)
+
     def _launch_viewer(self, mode: str) -> None:
         """
         在主线程直接调用 Open3D 窗口。
@@ -818,6 +903,14 @@ class MainWindow(QMainWindow):
                 show_pointcloud(
                     self._loaded_pcd,
                     window_title="点云预览",
+                    width=w, height=h,
+                    background_color=bg,
+                    point_size=ps,
+                )
+            elif mode == "seg" and self._last_seg_output is not None and self._last_seg_output.colored_pcd is not None:
+                show_pointcloud(
+                    self._last_seg_output.colored_pcd,
+                    window_title="语义分割结果（彩色）",
                     width=w, height=h,
                     background_color=bg,
                     point_size=ps,

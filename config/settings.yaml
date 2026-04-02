@@ -6,7 +6,7 @@
 app:
   name: "动态3D障碍物感知系统"
   version: "1.0.0"
-  stage: "phase3_openpcdet_detect"
+  stage: "phase4_mmdet3d_segment"
 
 # 日志配置
 logging:
@@ -68,3 +68,24 @@ detector:
     model_cfg: ""           # OpenPCDet 模型配置 yaml（为空则自动走占位实现）
     checkpoint_path: ""     # OpenPCDet 权重路径（为空则自动走占位实现）
     device: "cpu"           # "cpu" 或 "cuda"
+
+# 分割器配置（里程碑 4）
+segmentor:
+  backend: "mmdet3d"          # 预留字段：当前仅实现 mmdet3d 占位封装
+  num_classes: 4              # 逐点类别数（占位实现使用）
+  # 可选：统一类别名（长度>=num_classes 时生效）
+  class_names:
+    - "background"
+    - "ground"
+    - "obstacle"
+    - "vegetation"
+  # 可选：调色板 {id: [r,g,b]}，归一化 0~1；为空时会尝试复用 fake_segmentor.class_colors
+  # palette:
+  #   0: [0.55, 0.55, 0.55]
+  #   1: [0.20, 0.55, 0.95]
+  #   2: [0.90, 0.25, 0.25]
+  #   3: [0.20, 0.85, 0.25]
+  mmdet3d:
+    config_file: ""          # MMDet3D 配置文件（为空则走占位实现）
+    checkpoint_file: ""      # MMDet3D 权重文件（为空则走占位实现）
+    device: "cpu"            # "cpu" 或 "cuda"
