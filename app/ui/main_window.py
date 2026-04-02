@@ -441,18 +441,16 @@ class MainWindow(QMainWindow):
             loader = NuScenesMiniLoader(self._nusc_dataroot, version=ver)
             loader.connect()
             self._nusc_loader = loader
-        except ImportError as exc:
-            logger.error("nuScenes 依赖缺失: %s", exc)
-            QMessageBox.critical(
-                self,
-                "依赖缺失",
-                "未安装 nuscenes-devkit。\n请执行：pip install nuscenes-devkit",
-            )
-            self._status_bar.showMessage("连接失败")
-            return
         except Exception as exc:
             logger.error("连接 nuScenes 失败: %s", exc, exc_info=True)
-            QMessageBox.critical(self, "连接失败", f"无法加载数据集：\n{exc}")
+            QMessageBox.critical(
+                self,
+                "连接失败",
+                "无法加载 nuScenes：\n"
+                f"{exc}\n\n"
+                "说明：如果元数据不完整，会自动降级到模拟模式（扫描 samples/LIDAR_TOP/*.bin）。\n"
+                "若模拟也失败，请确保你的目录中至少存在 samples/LIDAR_TOP/*.bin。",
+            )
             self._status_bar.showMessage("连接失败")
             return
 
@@ -462,9 +460,18 @@ class MainWindow(QMainWindow):
             self._combo_nusc_scene.addItem(s["name"], s["token"])
         self._combo_nusc_scene.blockSignals(False)
 
-        self._log(f"nuScenes 连接成功 | version={ver} | 场景数={self._combo_nusc_scene.count()}")
+        mode_txt = (
+            "真实模式"
+            if self._nusc_loader.mode == "real"
+            else "模拟模式"
+            if self._nusc_loader.mode == "simulated"
+            else self._nusc_loader.mode
+        )
+        self._log(
+            f"nuScenes 连接成功 | {mode_txt} | version={ver} | 场景数={self._combo_nusc_scene.count()}"
+        )
         self._on_nusc_navigation_changed()
-        self._status_bar.showMessage("nuScenes 已连接")
+        self._status_bar.showMessage(f"nuScenes 已连接（{mode_txt}）")
 
     def _current_nusc_scene_token(self) -> Optional[str]:
         if self._combo_nusc_scene.count() == 0:

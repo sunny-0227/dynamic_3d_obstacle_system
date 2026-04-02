@@ -50,3 +50,8 @@
 2026-04-01 17:17:03 | INFO     | dynamic_3d.core.fake_detector | 开始伪检测，目标框数量: 3
 2026-04-01 17:17:03 | INFO     | dynamic_3d.core.fake_detector | 伪检测完成，共生成 3 个检测框
 2026-04-01 17:17:03 | INFO     | dynamic_3d.core.fusion | 流水线完成 | 分割点数: 3000 | 检测框数: 3
+2026-04-02 15:56:32 | INFO     | dynamic_3d | 日志系统初始化完成 | 根目录: /Users/meishuangyang/Desktop/sht/dynamic_3d_obstacle_system
+2026-04-02 15:56:32 | INFO     | dynamic_3d.datasets.nuscenes_loader | 未发现/未能满足完整元数据，将进入模拟模式 | bin 文件数: 1
+2026-04-02 15:56:32 | INFO     | dynamic_3d.datasets.nuscenes_loader | nuScenes 连接成功，当前走模拟模式
+2026-04-02 15:56:34 | INFO     | dynamic_3d.io.pointcloud_loader | 加载 .bin 文件: data/fake_nuscenes_mini_check/samples/LIDAR_TOP/000000.bin
+2026-04-02 15:56:34 | INFO     | dynamic_3d.io.pointcloud_loader | 成功加载 .bin 点云，共 80 个点
