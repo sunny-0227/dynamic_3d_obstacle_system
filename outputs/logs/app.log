@@ -55,3 +55,5 @@
 2026-04-02 15:56:32 | INFO     | dynamic_3d.datasets.nuscenes_loader | nuScenes 连接成功，当前走模拟模式
 2026-04-02 15:56:34 | INFO     | dynamic_3d.io.pointcloud_loader | 加载 .bin 文件: data/fake_nuscenes_mini_check/samples/LIDAR_TOP/000000.bin
 2026-04-02 15:56:34 | INFO     | dynamic_3d.io.pointcloud_loader | 成功加载 .bin 点云，共 80 个点
+2026-04-02 16:20:08 | WARNING  | dynamic_3d.core.detector.openpcdet_detector | 未提供 OpenPCDet 配置/权重，将使用占位检测实现。
+2026-04-02 16:28:39 | WARNING  | dynamic_3d.core.detector.openpcdet_detector | 未提供 OpenPCDet 配置/权重，将使用占位检测实现。

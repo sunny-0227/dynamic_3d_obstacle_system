@@ -7,6 +7,9 @@
 
 里程碑2：nuScenes mini 适配在 GUI 中完成；数据集逻辑位于 app.datasets，
 点云加载仍由 app.io.pointcloud_loader 完成，与算法层解耦。
+
+里程碑3：真实/占位检测接口接入在 app.core.detector + app.core.pipeline 中完成，
+GUI 提供“执行检测”按钮调用统一检测 pipeline。
 """
 
 import sys
@@ -62,7 +65,7 @@ def main() -> None:
         "启动 %s v%s | 阶段: %s",
         app_info.get("name", "动态3D障碍物感知系统"),
         app_info.get("version", "1.0.0"),
-        app_info.get("stage", "phase1_fake"),
+        app_info.get("stage", "phase3_openpcdet_detect"),
     )
 
     # 3. 创建 PyQt5 应用

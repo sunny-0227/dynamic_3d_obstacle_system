@@ -6,7 +6,7 @@
 app:
   name: "动态3D障碍物感知系统"
   version: "1.0.0"
-  stage: "phase2_nuscenes_mini"
+  stage: "phase3_openpcdet_detect"
 
 # 日志配置
 logging:
@@ -54,3 +54,17 @@ visualization:
   window_height: 720
   background_color: [0.05, 0.05, 0.05]  # 深色背景
   point_size: 2.0         # 点大小
+
+# 检测器配置（里程碑 3）
+detector:
+  backend: "openpcdet"        # 预留字段：当前仅实现 openpcdet 占位封装
+  score_threshold: 0.1       # 置信度过滤阈值（占位实现也会使用）
+  num_boxes_fake: 3          # 占位实现生成的框数量
+  class_names:               # 统一类别名（占位实现使用）
+    - "car"
+    - "pedestrian"
+    - "cyclist"
+  openpcdet:
+    model_cfg: ""           # OpenPCDet 模型配置 yaml（为空则自动走占位实现）
+    checkpoint_path: ""     # OpenPCDet 权重路径（为空则自动走占位实现）
+    device: "cpu"           # "cpu" 或 "cuda"

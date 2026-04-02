@@ -3,6 +3,7 @@ PyQt5 主窗口模块
 提供简洁的 GUI 界面，包含：
   - 选择点云文件 / 加载 / 运行演示（里程碑1）
   - nuScenes mini 根目录、导航与当前帧加载（里程碑2）
+  - 执行检测（里程碑3：OpenPCDet 接口封装/占位实现）
   - 状态栏和日志信息区域
 Open3D 采用独立弹出窗口方式，不嵌入 Qt。
 """
@@ -29,21 +30,21 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+import numpy as np
 import open3d as o3d
 
-from app.io.pointcloud_loader import load_pointcloud
-from app.core.fusion import run_full_pipeline, FusionResult
-from app.visualization.open3d_viewer import show_pointcloud, show_fusion_result
-from app.utils.logger import get_logger
 from app.datasets.nuscenes_loader import NuScenesMiniLoader
 from app.datasets.nuscenes_parser import NuScenesFrameRecord
+from app.core.detector.openpcdet_detector import OpenPCDetDetector
+from app.core.fusion import FusionResult, run_full_pipeline
+from app.core.pipeline.detect_pipeline import DetectPipeline
+from app.io.pointcloud_loader import load_pointcloud
+from app.utils.logger import get_logger
+from app.visualization.open3d_viewer import show_fusion_result, show_pointcloud
 
 logger = get_logger("ui.main_window")
 
 
-# -------------------------------------------------------
-# 主窗口
-# -------------------------------------------------------
 class MainWindow(QMainWindow):
     """应用主窗口"""
 
@@ -51,14 +52,21 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._config = config or {}
         self._project_root = Path(__file__).resolve().parent.parent.parent
+
+        # 当前加载的点云（来自单文件或 nuScenes）
         self._current_file: Optional[Path] = None
         self._loaded_pcd: Optional[o3d.geometry.PointCloud] = None
         self._fusion_result: Optional[FusionResult] = None
         self._last_nusc_record: Optional[NuScenesFrameRecord] = None
 
-        # nuScenes：仅保存根路径与适配器，点云仍走 IO 层
+        # nuScenes mini
         self._nusc_dataroot: Optional[Path] = None
         self._nusc_loader: Optional[NuScenesMiniLoader] = None
+
+        # 检测 pipeline（懒加载）
+        self._detector_pipeline: Optional[DetectPipeline] = None
+        self._detector: Optional[OpenPCDetDetector] = None
+        self._last_detections = None  # 里程碑3：保存最近一次 DetectionBox 列表
 
         self._build_ui()
         self._apply_style()
@@ -171,13 +179,15 @@ class MainWindow(QMainWindow):
         self._btn_select = QPushButton("选择点云文件")
         self._btn_load = QPushButton("加载点云")
         self._btn_demo = QPushButton("运行演示")
+        self._btn_detect = QPushButton("执行检测")
 
-        # 初始状态：加载和演示按钮禁用
+        # 初始状态：加载、演示、检测按钮禁用
         self._btn_load.setEnabled(False)
         self._btn_demo.setEnabled(False)
+        self._btn_detect.setEnabled(False)
 
         # 设置按钮最小高度，提升可点击性
-        for btn in (self._btn_select, self._btn_load, self._btn_demo):
+        for btn in (self._btn_select, self._btn_load, self._btn_demo, self._btn_detect):
             btn.setMinimumHeight(40)
             btn_layout.addWidget(btn)
 
@@ -204,6 +214,7 @@ class MainWindow(QMainWindow):
         self._btn_select.clicked.connect(self._on_select_file)
         self._btn_load.clicked.connect(self._on_load_pointcloud)
         self._btn_demo.clicked.connect(self._on_run_demo)
+        self._btn_detect.clicked.connect(self._on_execute_detection)
 
         self._btn_nusc_root.clicked.connect(self._on_nusc_select_root)
         self._btn_nusc_connect.clicked.connect(self._on_nusc_connect)
@@ -288,6 +299,7 @@ class MainWindow(QMainWindow):
             self._btn_select,
             self._btn_load,
             self._btn_demo,
+            self._btn_detect,
             self._btn_nusc_root,
             self._btn_nusc_connect,
             self._combo_nusc_mode,
@@ -333,6 +345,7 @@ class MainWindow(QMainWindow):
             self._btn_load.setEnabled(True)
         if self._loaded_pcd is not None:
             self._btn_demo.setEnabled(True)
+            self._btn_detect.setEnabled(True)
 
     # --------------------------------------------------
     # nuScenes：配置中的固定根目录 / 启动时自动连接
@@ -590,6 +603,7 @@ class MainWindow(QMainWindow):
             self._file_label.setText(str(record.lidar_path))
             self._log(f"加载成功！点云共 {n_pts:,} 个点")
             self._btn_demo.setEnabled(True)
+            self._btn_detect.setEnabled(True)
             self._btn_load.setEnabled(True)
             self._status_bar.showMessage(
                 f"已加载 nuScenes 帧 {idx + 1}/{record.frame_count}"
@@ -627,6 +641,7 @@ class MainWindow(QMainWindow):
         self._last_nusc_record = None
         self._btn_load.setEnabled(True)
         self._btn_demo.setEnabled(False)
+        self._btn_detect.setEnabled(False)
 
         self._file_label.setText(str(self._current_file))
         self._log(f"已选择文件: {self._current_file}")
@@ -651,6 +666,7 @@ class MainWindow(QMainWindow):
             self._log(f"加载成功！点云共 {n_pts:,} 个点")
             self._status_bar.showMessage(f"已加载 {n_pts:,} 个点")
             self._btn_demo.setEnabled(True)
+            self._btn_detect.setEnabled(True)
 
             # 加载后立即弹窗预览原始点云
             self._log("正在打开 Open3D 预览窗口（关闭窗口后可继续操作）...")
@@ -711,6 +727,74 @@ class MainWindow(QMainWindow):
     # --------------------------------------------------
     # 启动 Open3D 窗口（主线程直接调用）
     # --------------------------------------------------
+    def _on_execute_detection(self) -> None:
+        """对当前加载的点云执行真实/占位检测（里程碑 3）。"""
+        if self._loaded_pcd is None:
+            QMessageBox.warning(self, "警告", "请先加载点云（或加载 nuScenes 帧点云）！")
+            return
+
+        if self._detector_pipeline is None:
+            # 从配置加载检测器参数（当前主要用于占位 fallback，真实接入后可在 OpenPCDetDetector 内实现）
+            det_cfg = self._config.get("detector", {})
+            score_threshold = det_cfg.get("score_threshold", 0.1)
+            num_boxes_fake = det_cfg.get("num_boxes_fake", 3)
+            class_names = det_cfg.get("class_names", ["car", "pedestrian", "cyclist"])
+
+            openpcdet_cfg = det_cfg.get("openpcdet", {})
+            model_cfg_raw = openpcdet_cfg.get("model_cfg", "") or ""
+            ckpt_raw = openpcdet_cfg.get("checkpoint_path", "") or ""
+            device = openpcdet_cfg.get("device", "cpu")
+
+            def _resolve_maybe_relative(p: str) -> Optional[Path]:
+                if not p or not str(p).strip():
+                    return None
+                pp = Path(str(p).strip())
+                if not pp.is_absolute():
+                    pp = self._project_root / pp
+                return pp
+
+            model_cfg_path = _resolve_maybe_relative(model_cfg_raw)
+            checkpoint_path = _resolve_maybe_relative(ckpt_raw)
+
+            self._detector = OpenPCDetDetector(
+                model_cfg_path=model_cfg_path,
+                checkpoint_path=checkpoint_path,
+                device=device,
+                score_threshold=score_threshold,
+                num_boxes_fake=num_boxes_fake,
+                class_names=class_names,
+            )
+            self._detector_pipeline = DetectPipeline(detector=self._detector)
+
+        # 检测期间禁用按钮，避免重复点击
+        self._btn_detect.setEnabled(False)
+        QApplication.processEvents()
+
+        try:
+            points_xyz = np.asarray(self._loaded_pcd.points, dtype=np.float32)
+            self._log("开始执行检测（里程碑 3：统一接口）...")
+            self._status_bar.showMessage("检测中...")
+
+            det_boxes = self._detector_pipeline.run(points_xyz)
+            self._last_detections = det_boxes
+
+            self._log(f"检测完成！共 {len(det_boxes)} 个检测框：")
+            for i, box in enumerate(det_boxes):
+                cx, cy, cz = box.center.tolist()
+                l, w, h = box.size.tolist()
+                self._log(
+                    f"  #{i+1} 类别: {box.class_name:12s} | score={box.score:.3f} | "
+                    f"center=({cx:.2f},{cy:.2f},{cz:.2f}) | size=({l:.2f},{w:.2f},{h:.2f}) | yaw={box.yaw:.3f}"
+                )
+            self._status_bar.showMessage("检测完成（已输出到日志区）")
+        except Exception as exc:
+            logger.error("执行检测失败: %s", exc, exc_info=True)
+            QMessageBox.critical(self, "检测失败", f"执行检测时发生错误：\n{exc}")
+            self._status_bar.showMessage("检测失败")
+        finally:
+            # 恢复按钮可用性（只要点云存在即可执行）
+            self._btn_detect.setEnabled(self._loaded_pcd is not None)
+
     def _launch_viewer(self, mode: str) -> None:
         """
         在主线程直接调用 Open3D 窗口。
