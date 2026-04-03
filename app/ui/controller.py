@@ -324,7 +324,13 @@ class AppController(QObject):
             self.sig_log.emit(f"[nuScenes] 已选择数据集根目录（尚未连接）: {root.as_posix()}")
         self._emit_state()
 
-    def connect_nusc(self) -> None:
+    def connect_nusc(self, nav_mode: str = "global", scene_token: Optional[str] = None) -> None:
+        """
+        连接 nuScenes 数据集。
+
+        nav_mode / scene_token 来自界面「导航方式」下拉框（未改则默认 global）。
+        connect() 内部会先建立默认全局帧列表；此处再按用户选择覆盖为 scene（若适用）。
+        """
         if self.state.nusc_root is None:
             self.sig_error.emit("提示", "请先选择 nuScenes 根目录")
             return
@@ -332,7 +338,7 @@ class AppController(QObject):
         ver = self._config.get("nuscenes", {}).get("version", "v1.0-mini")
         root = self.state.nusc_root
         self.sig_status.emit("连接 nuScenes 中…")
-        self.sig_log.emit(f"连接 nuScenes：root={root} version={ver}")
+        self.sig_log.emit(f"连接 nuScenes：root={root.as_posix()} version={ver}")
 
         def job():
             loader = NuScenesMiniLoader(root, version=ver)
@@ -348,15 +354,58 @@ class AppController(QObject):
             self.state.last_seg = None
             self.state.last_scene = None
             root = self.state.nusc_root
+            try:
+                self._apply_initial_nusc_navigation(loader, nav_mode, scene_token)
+            except Exception as e:
+                logger.warning("按界面选择初始化导航失败，回退全数据集: %s", e, exc_info=True)
+                try:
+                    loader.set_navigation("global")
+                except Exception:
+                    pass
+                self.sig_log.emit(
+                    f"[nuScenes] 导航初始化异常，已回退为默认：{loader.navigation_display_zh()} | {e}"
+                )
+
+            nav_label = loader.navigation_display_zh()
+            n_frames = loader.frame_count
             self.sig_log.emit(
-                f"[模式] nuScenes 数据集 | 根目录: {root}\n"
+                f"[模式] nuScenes 数据集 | 根目录: {root.as_posix()}\n"
                 f"| 数据模式: {loader.mode_display_zh()}（内部 mode={loader.mode}）\n"
-                "| 请选择导航方式与场景后，设置帧索引并点击「加载当前帧点云」。"
+                f"| 导航方式: {nav_label} | 帧数: {n_frames}\n"
+                "| 可直接调整帧索引并点击「加载当前帧点云」（可随时在下拉框切换导航方式）。"
             )
-            self.sig_status.emit("nuScenes 已连接 — 请加载当前帧点云")
+            # 状态栏由主窗口 _on_state / _update_workflow_status_line 统一带上导航说明
             self._emit_state()
 
         self._run_in_thread(job, done)
+
+    def _apply_initial_nusc_navigation(
+        self,
+        loader: NuScenesMiniLoader,
+        nav_mode: str,
+        scene_token: Optional[str],
+    ) -> None:
+        """连接成功后：默认 global；若界面为 scene 则切换到指定或首个场景。"""
+        mode = str(nav_mode or "global").strip().lower()
+        if mode not in ("global", "scene"):
+            mode = "global"
+
+        if mode == "global":
+            loader.set_navigation("global")
+            return
+
+        tok = str(scene_token).strip() if scene_token is not None else ""
+        if not tok:
+            summaries = loader.get_scene_summaries()
+            if summaries:
+                tok = str(summaries[0]["token"])
+        if not tok:
+            loader.set_navigation("global")
+            self.sig_log.emit(
+                "[nuScenes] 按场景导航但无可用场景 token，已使用默认：全数据集（sample 表顺序，非时间序）"
+            )
+            return
+        loader.set_navigation("scene", scene_token=tok)
 
     def set_nusc_navigation(self, mode: str, scene_token: Optional[str] = None) -> None:
         loader = self.state.nusc_loader
@@ -394,7 +443,7 @@ class AppController(QObject):
             self.sig_log.emit(
                 f"[nuScenes] 场景: {rec.scene_name} | 帧索引: {idx}（0 基）/ 共 {rec.frame_count} 帧 | "
                 f"LiDAR: {lp.as_posix()}\n"
-                f"| 导航: {loader.navigation_mode} | 数据模式: {loader.mode_display_zh()}"
+                f"| 导航: {loader.navigation_display_zh()} | 数据模式: {loader.mode_display_zh()}"
             )
         if lp.suffix.lower() == ".pcd":
             self.sig_status.emit("加载 nuScenes 点云中…")

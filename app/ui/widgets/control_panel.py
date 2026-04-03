@@ -102,8 +102,10 @@ class ControlPanel(QWidget):
         row_mode = QHBoxLayout()
         row_mode.addWidget(QLabel("导航方式:"))
         self._combo_mode = QComboBox()
-        self._combo_mode.addItem("全数据集（sample 顺序）", "global")
+        # 默认首项：与 NuScenesMiniLoader.connect() 内 set_navigation("global") 一致
+        self._combo_mode.addItem("全数据集（sample 表顺序，非时间序）", "global")
         self._combo_mode.addItem("按场景时序链", "scene")
+        self._combo_mode.setCurrentIndex(0)
         row_mode.addWidget(self._combo_mode, stretch=1)
         nusc_layout.addLayout(row_mode)
 
@@ -137,7 +139,8 @@ class ControlPanel(QWidget):
         nusc_layout.addWidget(self._label_nusc_meta)
 
         self._hint_nusc = QLabel(
-            "nuScenes 模式：加载数据集后选择场景与帧索引，再点「加载当前帧点云」。"
+            "nuScenes：连接后默认使用「全数据集」导航并已生成帧列表，可直接选帧并点「加载当前帧点云」。"
+            "若需按场景浏览，再切换「导航方式」即可。"
         )
         self._hint_nusc.setWordWrap(True)
         self._hint_nusc.setStyleSheet("color: #6c7086; font-size: 12px;")
@@ -257,7 +260,9 @@ class ControlPanel(QWidget):
         return str(self._combo_scene.currentData())
 
     def set_nusc_nav_enabled(self, enabled: bool, frame_count: int = 0) -> None:
-        self._combo_mode.setEnabled(enabled)
+        # 已选根目录但未连接时，也允许切换「导航方式」，便于在「加载数据集」前选好（默认仍为全数据集）
+        root_set = bool(self._path_nusc.text().strip())
+        self._combo_mode.setEnabled(enabled or root_set)
         mode = self.navigation_mode()
         self._combo_scene.setEnabled(enabled and mode == "scene")
 

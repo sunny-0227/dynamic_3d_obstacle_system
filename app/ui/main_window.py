@@ -134,7 +134,7 @@ class MainWindow(QMainWindow):
         self._panel.sig_load_pointcloud.connect(self._controller.load_current_file_pointcloud)
 
         self._panel.sig_select_nusc_root.connect(self._on_pick_nusc_root)
-        self._panel.sig_connect_nusc.connect(self._controller.connect_nusc)
+        self._panel.sig_connect_nusc.connect(self._on_connect_nusc_clicked)
         self._panel.sig_nav_changed.connect(self._on_nav_changed)
         self._panel.sig_scene_changed.connect(self._on_scene_changed)
         self._panel.sig_prev_frame.connect(self._on_prev_frame)
@@ -221,6 +221,13 @@ class MainWindow(QMainWindow):
         self._panel.set_nusc_root(root)
         self._controller.set_nusc_root(root)
         self._status.set_status("已选择 nuScenes 根目录（请点击「加载数据集」）")
+
+    def _on_connect_nusc_clicked(self) -> None:
+        """加载数据集：使用界面当前「导航方式」（默认全数据集，无需用户每次手动选）。"""
+        self._controller.connect_nusc(
+            nav_mode=self._panel.navigation_mode(),
+            scene_token=self._panel.current_scene_token(),
+        )
 
     def _on_nav_changed(self, mode: str) -> None:
         token = self._panel.current_scene_token()
@@ -379,6 +386,7 @@ class MainWindow(QMainWindow):
                 blocks.append(f"数据集根目录: {state.nusc_root.as_posix()}")
             if nusc_connected and loader is not None:
                 blocks.append(f"数据模式: {loader.mode_display_zh()}")
+                blocks.append(f"导航方式: {loader.navigation_display_zh()}")
                 blocks.append(
                     "当前帧点云: "
                     + (
@@ -400,11 +408,12 @@ class MainWindow(QMainWindow):
         self._panel.set_workflow_status_text("\n".join(blocks))
 
         # 状态栏短摘要
-        if state.workflow == "nuscenes" and nusc_connected:
+        if state.workflow == "nuscenes" and nusc_connected and loader is not None:
+            nav = loader.navigation_display_zh()
             if state.loaded_pcd is not None and len(state.loaded_pcd.points) > 0:
-                self._status.set_status("nuScenes：帧点云已载入，可执行算法")
+                self._status.set_status(f"nuScenes | {nav} | 帧点云已载入，可执行算法")
             else:
-                self._status.set_status("nuScenes：请先加载当前帧点云")
+                self._status.set_status(f"nuScenes | {nav} | 请先加载当前帧点云")
         elif state.workflow == "single_file":
             if state.loaded_pcd is not None and len(state.loaded_pcd.points) > 0:
                 self._status.set_status("单文件：点云已载入，可执行算法")

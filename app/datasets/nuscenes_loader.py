@@ -73,6 +73,12 @@ class NuScenesMiniLoader:
             return "模拟模式（扫描 samples/LIDAR_TOP/*.bin）"
         return "未知"
 
+    def navigation_display_zh(self) -> str:
+        """当前导航方式的中文说明（与界面下拉框语义一致）。"""
+        if self._navigation_mode == "global":
+            return "全数据集（sample 表顺序，非时间序）"
+        return "按场景时序链"
+
     @property
     def is_connected(self) -> bool:
         return self._mode in (self.MODE_REAL, self.MODE_SIMULATED)
@@ -216,11 +222,14 @@ class NuScenesMiniLoader:
         real_ok = self._try_connect_real()
         if real_ok:
             logger.info("nuScenes 连接成功，当前走真实模式")
+            # 默认填充全局 sample 列表，避免 _tokens 为空导致 frame_count=0
+            self.set_navigation("global")
             return
 
         sim_ok = self._try_connect_simulated()
         if sim_ok:
             logger.info("nuScenes 连接成功，当前走模拟模式")
+            self.set_navigation("global")
             return
 
         # 两种模式都失败：给出明确错误
