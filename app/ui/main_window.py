@@ -1,5 +1,5 @@
 """
-毕业设计答辩演示版主窗口（里程碑 6）
+主窗口（里程碑 6：GUI 完善）
 
 目标：
   - 控制面板：文件/nuScenes 选择、场景/帧选择、常用按钮（加载/检测/分割/融合/一键/清空）
@@ -14,10 +14,12 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
+from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QVBoxLayout, QWidget
 
 from app.core.fusion.result_fusion import ResultFusion
@@ -47,7 +49,12 @@ class MainWindow(QMainWindow):
         self._apply_style()
         self._wire()
 
-        self._controller.sig_log.emit("主窗口初始化完成（里程碑6答辩演示版）")
+        self._controller.sig_log.emit("主窗口初始化完成（GUI完善）")
+
+    @staticmethod
+    def _defer(fn: Callable[..., None], *args, **kwargs) -> None:
+        """下一轮事件循环再执行，避免阻塞 busy/state 收尾。"""
+        QTimer.singleShot(0, partial(fn, *args, **kwargs))
 
     # -------------------------
     # UI
@@ -72,7 +79,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._log, stretch=1)
 
     def _apply_style(self) -> None:
-        """风格简洁、专业，适合答辩展示。"""
+        """风格简洁、专业。"""
         self.setStyleSheet(
             """
             QMainWindow { background-color: #1e1e2e; }
@@ -251,7 +258,7 @@ class MainWindow(QMainWindow):
             detections = st.last_det or []
             scene = ResultFusion().fuse(points_xyz=pts_xyz, seg_out=seg_out, detections=detections)
 
-            # 日志摘要：来源与统计，便于答辩讲解
+            # 日志摘要：来源与统计
             src = "检测+分割拼装" if (has_det and has_seg) else "仅检测" if has_det else "仅分割" if has_seg else "空结果拼装"
             self._log.append(f"融合显示：{src}（点数={pts_xyz.shape[0]:,} | 检测框={len(detections)}）")
             self._status.set_status(f"融合显示：{src}")
@@ -260,7 +267,7 @@ class MainWindow(QMainWindow):
                 labels = seg_out.seg.labels
                 uniq, cnt = np.unique(labels, return_counts=True) if labels.size > 0 else ([], [])
                 # 仅输出前 6 类，避免刷屏
-                self._log.append("分割统计（前6类）：")
+                self._log.append("分割统计（前6类）")
                 for lid, c in list(zip(list(uniq), list(cnt)))[:6]:
                     name = seg_out.seg.id_to_name.get(int(lid), f"class_{int(lid)}")
                     self._log.append(f"  - id={int(lid):2d} | {name:12s} | 点数={int(c):,}")
@@ -325,21 +332,25 @@ class MainWindow(QMainWindow):
             if st.last_seg is not None and getattr(st.last_seg, "colored_pcd", None) is not None:
                 self._log.append("显示：语义分割结果（彩色点云）")
                 self._status.set_status("显示：分割结果")
-                show_pointcloud(st.last_seg.colored_pcd, window_title="语义分割结果（彩色）")
+                self._defer(
+                    show_pointcloud,
+                    st.last_seg.colored_pcd,
+                    window_title="语义分割结果（彩色）",
+                )
             return
         if mode == "raw":
             if st.loaded_pcd is not None:
                 self._log.append("显示：原始点云预览")
                 self._status.set_status("显示：点云预览")
-                show_pointcloud(st.loaded_pcd, window_title="点云预览")
+                self._defer(show_pointcloud, st.loaded_pcd, window_title="点云预览")
             return
         if mode == "fusion":
             if st.last_scene is not None:
                 self._log.append("显示：融合场景（来自一键运行）")
                 self._status.set_status("显示：融合场景")
-                self._render_scene(st.last_scene)
+                self._defer(self._render_scene, st.last_scene)
             else:
-                self._on_show_fusion()
+                self._defer(self._on_show_fusion)
 
     def _render_scene(self, scene) -> None:
         if self._renderer is None:

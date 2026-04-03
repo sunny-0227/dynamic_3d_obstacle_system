@@ -17,7 +17,9 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -48,41 +50,48 @@ class ControlPanel(QWidget):
         super().__init__(parent)
         self._enabled_cache: dict[int, bool] = {}
         root = QVBoxLayout(self)
-        root.setSpacing(12)
+        root.setSpacing(8)
+        root.setContentsMargins(0, 0, 0, 0)
 
         # ---- 单文件 ----
         file_group = QGroupBox("本地点云文件")
         file_layout = QVBoxLayout(file_group)
+        file_layout.setSpacing(6)
         row_file = QHBoxLayout()
         self._btn_select_file = QPushButton("选择点云文件")
-        self._label_file = QLabel("未选择")
-        self._label_file.setWordWrap(True)
+        self._path_file = QLineEdit()
+        self._path_file.setReadOnly(True)
+        self._path_file.setPlaceholderText("未选择")
+        self._path_file.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._path_file.setMinimumHeight(28)
         row_file.addWidget(self._btn_select_file)
-        row_file.addWidget(self._label_file, stretch=1)
+        row_file.addWidget(self._path_file, stretch=1)
         file_layout.addLayout(row_file)
         self._btn_load_file = QPushButton("加载点云")
         self._btn_load_file.setEnabled(False)
+        self._btn_load_file.setMinimumHeight(36)
         file_layout.addWidget(self._btn_load_file)
         root.addWidget(file_group)
 
         # ---- nuScenes ----
         nusc_group = QGroupBox("nuScenes mini")
         nusc_layout = QVBoxLayout(nusc_group)
+        nusc_layout.setSpacing(6)
 
         row_root = QHBoxLayout()
         self._btn_nusc_root = QPushButton("选择数据集根目录")
-        self._label_nusc_root = QLabel("未选择")
-        self._label_nusc_root.setWordWrap(True)
+        self._path_nusc = QLineEdit()
+        self._path_nusc.setReadOnly(True)
+        self._path_nusc.setPlaceholderText("未选择")
+        self._path_nusc.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._path_nusc.setMinimumHeight(28)
         row_root.addWidget(self._btn_nusc_root)
-        row_root.addWidget(self._label_nusc_root, stretch=1)
-        nusc_layout.addLayout(row_root)
-
-        row_conn = QHBoxLayout()
+        row_root.addWidget(self._path_nusc, stretch=1)
         self._btn_nusc_connect = QPushButton("加载数据集")
         self._btn_nusc_connect.setEnabled(False)
-        row_conn.addWidget(self._btn_nusc_connect)
-        row_conn.addStretch()
-        nusc_layout.addLayout(row_conn)
+        self._btn_nusc_connect.setMinimumHeight(28)
+        row_root.addWidget(self._btn_nusc_connect)
+        nusc_layout.addLayout(row_root)
 
         row_mode = QHBoxLayout()
         row_mode.addWidget(QLabel("导航方式:"))
@@ -116,8 +125,9 @@ class ControlPanel(QWidget):
         row_frame.addWidget(self._btn_load_frame)
         nusc_layout.addLayout(row_frame)
 
-        self._label_nusc_meta = QLabel("请先选择并加载 nuScenes mini 根目录")
+        self._label_nusc_meta = QLabel("请先选择数据集根目录并点击「加载数据集」")
         self._label_nusc_meta.setWordWrap(True)
+        self._label_nusc_meta.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         nusc_layout.addWidget(self._label_nusc_meta)
 
         root.addWidget(nusc_group)
@@ -163,23 +173,42 @@ class ControlPanel(QWidget):
         self._btn_full.clicked.connect(self.sig_run_full.emit)
         self._btn_clear.clicked.connect(self.sig_clear_results.emit)
 
+        self._busy_widgets = (
+            self._btn_select_file,
+            self._btn_load_file,
+            self._btn_nusc_root,
+            self._btn_nusc_connect,
+            self._combo_mode,
+            self._combo_scene,
+            self._spin_frame,
+            self._btn_prev,
+            self._btn_next,
+            self._btn_load_frame,
+            self._btn_detect,
+            self._btn_segment,
+            self._btn_fusion,
+            self._btn_full,
+        )
+
     # ----------------------------
     # 状态/数据读写（供控制器调用）
     # ----------------------------
     def set_selected_file(self, path: Optional[Path]) -> None:
         if path is None:
-            self._label_file.setText("未选择")
+            self._path_file.clear()
+            self._path_file.setPlaceholderText("未选择")
             self._btn_load_file.setEnabled(False)
         else:
-            self._label_file.setText(str(path))
+            self._path_file.setText(str(path))
             self._btn_load_file.setEnabled(True)
 
     def set_nusc_root(self, path: Optional[Path]) -> None:
         if path is None:
-            self._label_nusc_root.setText("未选择")
+            self._path_nusc.clear()
+            self._path_nusc.setPlaceholderText("未选择")
             self._btn_nusc_connect.setEnabled(False)
         else:
-            self._label_nusc_root.setText(str(path))
+            self._path_nusc.setText(str(path))
             self._btn_nusc_connect.setEnabled(True)
 
     def set_nusc_meta_text(self, text: str) -> None:
@@ -235,29 +264,12 @@ class ControlPanel(QWidget):
         busy=True：临时禁用可能触发重入的控件（清空结果仍可用）。
         busy=False：恢复到 busy 前的 enabled 状态。
         """
-        lock_widgets = (
-            self._btn_select_file,
-            self._btn_load_file,
-            self._btn_nusc_root,
-            self._btn_nusc_connect,
-            self._combo_mode,
-            self._combo_scene,
-            self._spin_frame,
-            self._btn_prev,
-            self._btn_next,
-            self._btn_load_frame,
-            self._btn_detect,
-            self._btn_segment,
-            self._btn_fusion,
-            self._btn_full,
-        )
-
         if busy:
-            self._enabled_cache = {id(w): bool(w.isEnabled()) for w in lock_widgets}
-            for w in lock_widgets:
+            self._enabled_cache = {id(w): bool(w.isEnabled()) for w in self._busy_widgets}
+            for w in self._busy_widgets:
                 w.setEnabled(False)
         else:
-            for w in lock_widgets:
+            for w in self._busy_widgets:
                 prev = self._enabled_cache.get(id(w), True)
                 w.setEnabled(bool(prev))
             self._enabled_cache = {}

@@ -16,7 +16,7 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 import open3d as o3d
-from PyQt5.QtCore import QObject, QThread, pyqtSignal
+from PyQt5.QtCore import QObject, QThread, QTimer, pyqtSignal
 
 from app.core.detector.openpcdet_detector import OpenPCDetDetector
 from app.core.pipeline.detect_pipeline import DetectPipeline
@@ -24,7 +24,11 @@ from app.core.pipeline.full_pipeline import FullPipeline
 from app.core.pipeline.segment_pipeline import SegmentPipeline
 from app.core.segmentor.mmdet3d_segmentor import MMDet3DSegmentor, MMDet3DSegmentorConfig
 from app.datasets.nuscenes_loader import NuScenesMiniLoader
-from app.io.pointcloud_loader import load_pointcloud
+from app.io.pointcloud_loader import (
+    load_pointcloud,
+    load_points_xyz_numpy,
+    numpy_xyz_to_pointcloud,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger("ui.controller")
@@ -88,6 +92,53 @@ class AppController(QObject):
     def _emit_state(self) -> None:
         self.sig_state.emit(self.state)
 
+    def _store_loaded_pcd(
+        self,
+        pcd: o3d.geometry.PointCloud,
+        *,
+        current: Optional[Path] = None,
+        clear_algo: bool = False,
+    ) -> None:
+        if current is not None:
+            self.state.current_file = current
+        if clear_algo:
+            self.state.last_det = None
+            self.state.last_seg = None
+            self.state.last_scene = None
+        self.state.loaded_pcd = pcd
+
+    def _notify_pointcloud_loaded(self, success_log: str, *, open_preview: bool) -> None:
+        self.sig_log.emit(success_log)
+        self.sig_status.emit("点云已加载")
+        if open_preview:
+            self.sig_request_render.emit("raw")
+
+    def _load_pcd_on_main_thread(
+        self,
+        path: Path,
+        *,
+        current: Optional[Path] = None,
+        clear_algo: bool = False,
+        success_log: Optional[str] = None,
+    ) -> bool:
+        """在主线程用 Open3D 读 .pcd；成功返回 True 并可选打开预览。"""
+        self.sig_busy.emit(True)
+        ok = False
+        try:
+            pcd = load_pointcloud(path)
+            self._store_loaded_pcd(pcd, current=current, clear_algo=clear_algo)
+            msg = success_log if success_log is not None else f"加载成功：点数 {len(pcd.points):,}"
+            self._notify_pointcloud_loaded(msg, open_preview=True)
+            ok = True
+        except Exception as e:
+            logger.error("主线程加载 .pcd 失败: %s", e, exc_info=True)
+            self.sig_error.emit("加载失败", str(e))
+            self.sig_status.emit("加载失败")
+        finally:
+            self.sig_busy.emit(False)
+            self._emit_state()
+        return ok
+
     def _run_in_thread(self, fn: Callable[[], Any], on_done: Callable[[Any], None]) -> None:
         if self._thread is not None:
             # 简化：不支持并行任务，避免状态竞争
@@ -119,9 +170,12 @@ class AppController(QObject):
     def _finish_thread(self) -> None:
         if self._thread is not None:
             self._thread.quit()
-            self._thread.wait(2000)
+            if not self._thread.wait(5000):
+                logger.warning("后台线程 5s 内未退出，若界面异常可重启程序（Windows 上请勿强制结束进程除非无响应）")
             self._thread = None
+        # 先解除 busy，再根据最新状态刷新按钮（避免 restore 覆盖 on_done 里启用的控件）
         self.sig_busy.emit(False)
+        self._emit_state()
 
     def _ensure_pipelines(self) -> None:
         if self._detector_pipeline is None:
@@ -196,16 +250,20 @@ class AppController(QObject):
         self.sig_status.emit("加载点云中…")
         self.sig_log.emit(f"正在加载点云：{p}")
 
-        def job():
-            pcd = load_pointcloud(p)
-            return pcd
+        # .pcd 主线程 Open3D；.bin 子线程仅 numpy，主线程再建 PointCloud（避免 Windows 子线程卡死）
+        if p.suffix.lower() == ".pcd":
+            self._load_pcd_on_main_thread(p)
+            return
 
-        def done(pcd):
-            self.state.loaded_pcd = pcd
-            n = len(pcd.points)
-            self.sig_log.emit(f"加载成功：点数 {n:,}")
-            self.sig_status.emit("点云已加载")
-            self._emit_state()
+        def job():
+            return load_points_xyz_numpy(p)
+
+        def done(xyz):
+            self._store_loaded_pcd(numpy_xyz_to_pointcloud(xyz))
+            self._notify_pointcloud_loaded(
+                f"加载成功：点数 {len(self.state.loaded_pcd.points):,}",
+                open_preview=True,
+            )
 
         self._run_in_thread(job, done)
 
@@ -258,23 +316,33 @@ class AppController(QObject):
             return
         idx = int(frame_index)
 
-        def job():
+        try:
             rec = loader.get_frame_record(idx)
-            if not rec.lidar_path.is_file():
-                raise FileNotFoundError(str(rec.lidar_path))
-            pcd = load_pointcloud(rec.lidar_path)
-            return rec, pcd
+        except Exception as e:
+            self.sig_error.emit("获取帧失败", str(e))
+            return
+
+        if not rec.lidar_path.is_file():
+            self.sig_error.emit("文件缺失", str(rec.lidar_path))
+            return
+
+        lp = rec.lidar_path
+        success_log = f"已加载 nuScenes 帧：{idx+1}/{rec.frame_count} | {rec.lidar_path.name}"
+        if lp.suffix.lower() == ".pcd":
+            self.sig_status.emit("加载 nuScenes 点云中…")
+            self._load_pcd_on_main_thread(
+                lp, current=lp, clear_algo=True, success_log=success_log
+            )
+            return
+
+        def job():
+            return rec, load_points_xyz_numpy(lp)
 
         def done(res):
-            rec, pcd = res
-            self.state.current_file = rec.lidar_path
-            self.state.loaded_pcd = pcd
-            self.state.last_det = None
-            self.state.last_seg = None
-            self.state.last_scene = None
-            self.sig_log.emit(f"已加载 nuScenes 帧：{idx+1}/{rec.frame_count} | {rec.lidar_path.name}")
-            self.sig_status.emit("点云已加载")
-            self._emit_state()
+            rec2, xyz = res
+            pcd = numpy_xyz_to_pointcloud(xyz)
+            self._store_loaded_pcd(pcd, current=rec2.lidar_path, clear_algo=True)
+            self._notify_pointcloud_loaded(success_log, open_preview=True)
 
         self.sig_status.emit("加载 nuScenes 点云中…")
         self._run_in_thread(job, done)
@@ -327,15 +395,31 @@ class AppController(QObject):
     def run_full(self) -> None:
         # 一键运行：若未加载但有 current_file 则先加载再跑（单文件演示更顺畅）
         if self.state.loaded_pcd is None and self.state.current_file is not None and self.state.current_file.is_file():
+            cf = self.state.current_file
+            if cf.suffix.lower() == ".pcd":
+                self.sig_log.emit("一键运行：点云未加载，在主线程加载 .pcd …")
+                self.sig_busy.emit(True)
+                try:
+                    self._store_loaded_pcd(load_pointcloud(cf))
+                    self._emit_state()
+                    # 须等 busy 收尾后再启动一键，否则 _run_in_thread 会判「已有任务」
+                    QTimer.singleShot(0, self.run_full)
+                except Exception as e:
+                    self.sig_error.emit("加载失败", str(e))
+                finally:
+                    self.sig_busy.emit(False)
+                    self._emit_state()
+                return
+
             self.sig_log.emit("一键运行：点云未加载，先自动加载…")
 
             def job_load():
-                return load_pointcloud(self.state.current_file)
+                return load_points_xyz_numpy(cf)
 
-            def done_load(pcd):
-                self.state.loaded_pcd = pcd
+            def done_load(xyz):
+                self._store_loaded_pcd(numpy_xyz_to_pointcloud(xyz))
                 self._emit_state()
-                self.run_full()
+                QTimer.singleShot(0, self.run_full)
 
             self._run_in_thread(job_load, done_load)
             return

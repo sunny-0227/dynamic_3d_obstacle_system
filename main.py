@@ -20,7 +20,7 @@ GUI 提供“执行分割”按钮调用统一分割 pipeline。
   - app.core.pipeline.full_pipeline 提供一键运行入口
   - app.visualization.scene_renderer 在同一 Open3D 视窗渲染点云+分割+检测框
 
-里程碑6：答辩演示版 GUI 完善：
+里程碑6：GUI 完善：
   - app.ui.controller：控制器 + 后台线程任务
   - app.ui.widgets.*：控制面板/日志面板/状态栏
   - app.ui.main_window：主窗口装配
@@ -83,10 +83,14 @@ def main() -> None:
     )
 
     # 3. 创建 PyQt5 应用
-    # 高 DPI 支持（Windows 多显示器场景），必须在 QApplication 实例化前设置
+    # 高 DPI（Windows 多显示器等）；须在 QApplication 创建前设置；旧版/精简 Qt 可能不支持
     from PyQt5.QtCore import Qt as _Qt
-    QApplication.setAttribute(_Qt.AA_EnableHighDpiScaling, True)
-    QApplication.setAttribute(_Qt.AA_UseHighDpiPixmaps, True)
+
+    try:
+        QApplication.setAttribute(_Qt.AA_EnableHighDpiScaling, True)
+        QApplication.setAttribute(_Qt.AA_UseHighDpiPixmaps, True)
+    except Exception:
+        pass
 
     app = QApplication(sys.argv)
     app.setApplicationName(app_info.get("name", "动态3D障碍物感知系统"))
