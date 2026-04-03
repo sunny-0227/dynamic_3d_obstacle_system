@@ -16,7 +16,7 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 import open3d as o3d
-from PyQt5.QtCore import QObject, QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal
 
 from app.core.detector.openpcdet_detector import OpenPCDetDetector
 from app.core.pipeline.detect_pipeline import DetectPipeline
@@ -34,7 +34,12 @@ from app.utils.logger import get_logger
 logger = get_logger("ui.controller")
 
 
-class _Worker(QObject):
+class _TaskThread(QThread):
+    """
+    一次性后台任务：重写 run()，不在子线程里跑 exec()。
+    避免 moveToThread+QThread 默认事件循环与主线程 wait()/quit() 在 Windows 上偶发死锁。
+    """
+
     sig_done = pyqtSignal(object)
     sig_error = pyqtSignal(str, str)
 
@@ -146,15 +151,12 @@ class AppController(QObject):
             return
 
         self.sig_busy.emit(True)
-        self._thread = QThread()
-        worker = _Worker(fn)
-        worker.moveToThread(self._thread)
-        self._thread.started.connect(worker.run)
-        worker.sig_done.connect(lambda res: self._on_thread_done(res, on_done))
-        worker.sig_error.connect(self._on_thread_error)
-        worker.sig_done.connect(worker.deleteLater)
-        worker.sig_error.connect(worker.deleteLater)
-        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread = _TaskThread(fn)
+        self._thread.sig_done.connect(
+            lambda res: self._on_thread_done(res, on_done),
+            Qt.QueuedConnection,
+        )
+        self._thread.sig_error.connect(self._on_thread_error, Qt.QueuedConnection)
         self._thread.start()
 
     def _on_thread_done(self, res: Any, on_done: Callable[[Any], None]) -> None:
@@ -169,10 +171,12 @@ class AppController(QObject):
 
     def _finish_thread(self) -> None:
         if self._thread is not None:
-            self._thread.quit()
-            if not self._thread.wait(5000):
-                logger.warning("后台线程 5s 内未退出，若界面异常可重启程序（Windows 上请勿强制结束进程除非无响应）")
+            t = self._thread
             self._thread = None
+            # 须在槽内 wait 后再 deleteLater：避免 finished 早于 sig_done 导致对象被提前释放
+            if t.isRunning() and not t.wait(5000):
+                logger.warning("后台线程 5s 内未结束，若界面异常可重启程序")
+            t.deleteLater()
         # 先解除 busy，再根据最新状态刷新按钮（避免 restore 覆盖 on_done 里启用的控件）
         self.sig_busy.emit(False)
         self._emit_state()
