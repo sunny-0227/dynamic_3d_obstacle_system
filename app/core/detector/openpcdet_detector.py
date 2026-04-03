@@ -133,6 +133,10 @@ class OpenPCDetDetector(BaseDetector):
     def _detect_fake(self, points_xyz: np.ndarray) -> List[DetectionBox]:
         """
         占位检测：根据点云空间范围随机生成若干 3D 框，并输出统一 DetectionBox。
+
+        与里程碑 1 的 `app.core.fake_detector.run_fake_detection` 语义相近，但输出为 `DetectionBox`
+        （绕 Z 轴 yaw），供 `BaseDetector` / pipeline 统一接口使用；不直接依赖 fake_detector 模块，
+        避免 Open3D 几何类型与 pipeline 数据结构耦合。
         """
         if points_xyz.size == 0:
             return []

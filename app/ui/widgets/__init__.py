@@ -6,6 +6,8 @@ UI widgets 子包（里程碑 6）
 __all__ = [
     "control_panel",
     "log_panel",
-    "status_bar",
+    "defense_header",
+    "defense_status_bar",
+    "data_summary_card",
 ]
 

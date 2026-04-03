@@ -2,6 +2,9 @@
 融合模块包（里程碑 1 + 里程碑 5）
 
 说明：
+  - 里程碑 1 的 `run_full_pipeline` / `FusionResult` 与 `fake_detector` / `fake_segmentor` 直接对接，
+    供独立演示或脚本使用；当前 PyQt 主流程走 `DetectPipeline` / `SegmentPipeline` / `ResultFusion.fuse`，
+    占位推理在 `OpenPCDetDetector._detect_fake` 与 `MMDet3DSegmentor._segment_fake_impl` 中实现。
   - 里程碑1 的“伪分割 + 伪检测”融合接口历史上位于 `app/core/fusion.py`。
     为满足里程碑5 的包结构 `app/core/fusion/result_fusion.py`，这里将其迁移到包内并保持 API 不变：
       - FusionResult

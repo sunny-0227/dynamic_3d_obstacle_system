@@ -1,39 +1,67 @@
 """
-主窗口（里程碑 6：GUI 完善）
+主窗口 — 毕业设计答辩展示版 UI
 
-目标：
-  - 控制面板：文件/nuScenes 选择、场景/帧选择、常用按钮（加载/检测/分割/融合/一键/清空）
-  - 日志面板：运行日志输出
-  - 状态栏：提示当前状态
-  - 控制器：后台线程执行耗时任务，UI 线程负责交互与 Open3D 显示
-
-说明：
-  - 为保证 Windows/Open3D 稳定性，Open3D 窗口仍在主线程打开（会阻塞，属正常行为）。
-  - 加载/检测/分割/一键运行的计算部分放到后台线程，尽量避免 Qt 主线程卡死。
+布局：顶栏标题区 | 左控制区（固定宽） + 右摘要与日志 | 底部分区状态栏。
+保持与 AppController 的既有信号/槽约定，不修改算法与数据集逻辑。
 """
 
 from __future__ import annotations
 
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 import numpy as np
-from PyQt5.QtCore import QTimer
-from PyQt5.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QVBoxLayout, QWidget
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QMainWindow,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
-from app.core.fusion.result_fusion import ResultFusion
-from app.core.pipeline.segment_pipeline import SegmentPipelineOutput
-from app.core.segmentor.base_segmentor import SegmentationResult
+from app.core.fusion.result_fusion import fuse_partial_for_gui_display
 from app.ui.controller import AppController, AppState
+from app.ui.defense_dialogs import (
+    ask_nusc_root_clears_single_file,
+    ask_pick_file_disconnects_nusc,
+    ask_switch_data_source_to_nuscenes_clears_single,
+    ask_switch_data_source_to_single_disconnects_nusc,
+    info_need_nusc_data_source_for_connect,
+    info_need_nusc_data_source_for_root,
+    info_need_single_data_source_for_load,
+    info_need_single_data_source_for_pick_file,
+    show_error_critical,
+    warn_empty_pcd_cannot_preview,
+    warn_need_nonempty_pcd_for_fusion,
+)
+from app.ui.defense_file_dialogs import pick_nuscenes_root_directory, pick_pointcloud_file
+from app.ui.defense_panel_sync import (
+    compute_action_button_flags,
+    refresh_nusc_meta_line,
+    sync_control_panel_to_state,
+)
+from app.ui.defense_presenter import (
+    apply_defense_status_bar,
+    build_summary_text,
+    mode_header_text,
+)
+from app.ui.defense_styles import DEFENSE_MAINWINDOW_STYLESHEET
 from app.ui.widgets.control_panel import ControlPanel
+from app.ui.widgets.data_summary_card import DataSummaryCard
+from app.ui.widgets.defense_header import DefenseHeader
+from app.ui.widgets.defense_status_bar import DefenseStatusBar
 from app.ui.widgets.log_panel import LogPanel
-from app.ui.widgets.status_bar import StatusBar
 from app.utils.logger import get_logger
 from app.visualization.open3d_viewer import show_pointcloud
 from app.visualization.scene_renderer import RenderOptions, SceneRenderer
 
-logger = get_logger("ui.main_window_v6")
+logger = get_logger("ui.main_window_defense")
+
+# 课题副标题（可通过 config app.thesis_title 覆盖）
+DEFAULT_THESIS_TITLE = "面向动态场景的三维障碍物检测与分割系统研究"
 
 
 class MainWindow(QMainWindow):
@@ -49,92 +77,68 @@ class MainWindow(QMainWindow):
         self._apply_style()
         self._wire()
 
-        self._controller.sig_log.emit("主窗口初始化完成（GUI完善）")
+        self._controller.sig_log.emit("主窗口初始化完成（答辩展示版 UI）")
+        QTimer.singleShot(0, lambda: self._on_state(self._controller.state))
 
     @staticmethod
     def _defer(fn: Callable[..., None], *args, **kwargs) -> None:
-        """下一轮事件循环再执行，避免阻塞 busy/state 收尾。"""
         QTimer.singleShot(0, partial(fn, *args, **kwargs))
 
-    # -------------------------
-    # UI
-    # -------------------------
     def _build_ui(self) -> None:
-        app_name = self._config.get("app", {}).get("name", "动态3D障碍物感知系统")
-        self.setWindowTitle(app_name)
-        self.setMinimumSize(980, 720)
+        app_cfg = self._config.get("app", {})
+        app_name = app_cfg.get("name", "动态3D障碍物感知系统")
+        thesis = app_cfg.get("thesis_title", DEFAULT_THESIS_TITLE)
+
+        self.setWindowTitle(f"{app_name} ｜ 答辩演示")
+        self.setMinimumSize(1120, 780)
 
         central = QWidget()
         self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(16, 16, 16, 8)
-        layout.setSpacing(12)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(12, 12, 12, 8)
+        outer.setSpacing(10)
+
+        # 顶部标题区
+        self._header = DefenseHeader(app_name, thesis, self)
+        outer.addWidget(self._header)
+
+        # 左右分栏
+        split = QHBoxLayout()
+        split.setSpacing(14)
 
         self._panel = ControlPanel()
-        self._log = LogPanel(max_lines=500)
-        self._status = StatusBar()
-        self.setStatusBar(self._status)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(self._panel)
+        split.addWidget(scroll, stretch=0)
 
-        layout.addWidget(self._panel)
-        layout.addWidget(self._log, stretch=1)
+        right = QVBoxLayout()
+        right.setSpacing(10)
+        self._summary = DataSummaryCard()
+        self._log = LogPanel(max_lines=800)
+        right.addWidget(self._summary, stretch=0)
+        right.addWidget(self._log, stretch=1)
+        split.addLayout(right, stretch=1)
+
+        outer.addLayout(split, stretch=1)
+
+        # 底部状态栏（三分栏）
+        self._dstatus = DefenseStatusBar()
+        self.setStatusBar(self._dstatus)
 
     def _apply_style(self) -> None:
-        """风格简洁、专业。"""
-        self.setStyleSheet(
-            """
-            QMainWindow { background-color: #1e1e2e; }
-            QWidget {
-                background-color: #1e1e2e;
-                color: #cdd6f4;
-                font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
-                font-size: 13px;
-            }
-            QGroupBox {
-                border: 1px solid #45475a;
-                border-radius: 6px;
-                margin-top: 8px;
-                padding-top: 8px;
-                color: #a6e3a1;
-                font-weight: bold;
-            }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }
-            QPushButton {
-                background-color: #313244;
-                color: #cdd6f4;
-                border: 1px solid #585b70;
-                border-radius: 5px;
-                padding: 6px 16px;
-            }
-            QPushButton:hover { background-color: #45475a; border-color: #89b4fa; }
-            QPushButton:pressed { background-color: #585b70; }
-            QPushButton:disabled { color: #585b70; border-color: #313244; }
-            QPlainTextEdit {
-                background-color: #11111b;
-                border: 1px solid #313244;
-                border-radius: 4px;
-                color: #a6e3a1;
-            }
-            QComboBox, QSpinBox {
-                background-color: #313244;
-                color: #cdd6f4;
-                border: 1px solid #585b70;
-                border-radius: 4px;
-                padding: 4px;
-            }
-            QStatusBar { background-color: #181825; color: #6c7086; }
-        """
-        )
+        self.setStyleSheet(DEFENSE_MAINWINDOW_STYLESHEET)
 
-    # -------------------------
-    # Wiring
-    # -------------------------
     def _wire(self) -> None:
-        # 控制面板 -> 控制器
+        self._panel.sig_data_source_changed.connect(self._on_panel_data_source)
+
         self._panel.sig_select_file.connect(self._on_pick_file)
-        self._panel.sig_load_pointcloud.connect(self._controller.load_current_file_pointcloud)
+        self._panel.sig_load_pointcloud.connect(self._guard_load_single_file)
 
         self._panel.sig_select_nusc_root.connect(self._on_pick_nusc_root)
-        self._panel.sig_connect_nusc.connect(self._on_connect_nusc_clicked)
+        self._panel.sig_connect_nusc.connect(self._guard_connect_nusc)
         self._panel.sig_nav_changed.connect(self._on_nav_changed)
         self._panel.sig_scene_changed.connect(self._on_scene_changed)
         self._panel.sig_prev_frame.connect(self._on_prev_frame)
@@ -149,81 +153,97 @@ class MainWindow(QMainWindow):
         self._panel.sig_clear_results.connect(self._on_clear)
         self._panel.sig_show_fusion.connect(self._on_show_fusion)
 
-        # 控制器 -> UI
         self._controller.sig_log.connect(self._log.append)
-        self._controller.sig_status.connect(self._status.set_status)
-        self._controller.sig_error.connect(lambda t, m: QMessageBox.critical(self, t, m))
+        self._controller.sig_status.connect(self._on_controller_status)
+        self._controller.sig_error.connect(
+            lambda t, m: show_error_critical(self, t, m)
+        )
         self._controller.sig_state.connect(self._on_state)
         self._controller.sig_busy.connect(self._panel.set_busy)
         self._controller.sig_request_render.connect(self._on_render_request)
 
-    # -------------------------
-    # UI slots
-    # -------------------------
+    def _on_controller_status(self, message: str) -> None:
+        msg = str(message)
+        self._header.set_status_line(f"当前状态：{msg}")
+        self._dstatus.set_exec_status(f"执行：{msg}")
+
+    def _on_panel_data_source(self, src: str) -> None:
+        """切换数据源单选：必要时确认并清理另一侧状态。"""
+        st = self._controller.state
+        if src == "nuscenes":
+            if st.workflow == "single_file" and st.current_file is not None:
+                if not ask_switch_data_source_to_nuscenes_clears_single(self):
+                    self._panel.sync_data_source_radio("single_file")
+                    return
+                self._controller.set_current_file(None)
+                self._panel.set_selected_file(None)
+        else:
+            if st.workflow == "nuscenes" and st.nusc_loader is not None and st.nusc_loader.is_connected:
+                if not ask_switch_data_source_to_single_disconnects_nusc(self):
+                    self._panel.sync_data_source_radio("nuscenes")
+                    return
+                self._controller.disconnect_nusc()
+                self._panel.set_nusc_root(None)
+
+        self._panel.apply_source_module_lock(src)
+        self._on_state(self._controller.state)
+
+    def _guard_load_single_file(self) -> None:
+        if self._panel.ui_data_source() != "single_file":
+            info_need_single_data_source_for_load(self)
+            return
+        self._controller.load_current_file_pointcloud()
+
+    def _guard_connect_nusc(self) -> None:
+        if self._panel.ui_data_source() != "nuscenes":
+            info_need_nusc_data_source_for_connect(self)
+            return
+        self._on_connect_nusc_clicked()
+
     def _on_pick_file(self) -> None:
+        if self._panel.ui_data_source() != "single_file":
+            info_need_single_data_source_for_pick_file(self)
+            return
+
         st = self._controller.state
         if st.workflow == "nuscenes" and st.nusc_loader is not None and st.nusc_loader.is_connected:
-            r = QMessageBox.question(
-                self,
-                "切换工作流",
-                "当前已连接 nuScenes 数据集。选择单文件将断开数据集连接并清空当前点云。\n\n是否继续？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if r != QMessageBox.Yes:
+            if not ask_pick_file_disconnects_nusc(self):
                 self._log.append("已取消：保留 nuScenes 模式")
                 return
             self._controller.disconnect_nusc()
             self._panel.set_nusc_root(None)
+            self._panel.sync_data_source_radio("single_file")
+            self._panel.apply_source_module_lock("single_file")
 
-        default_dir = str(
-            self._project_root
-            / self._config.get("pointcloud", {}).get("default_data_dir", "data")
-        )
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "选择点云文件",
-            default_dir,
-            "点云文件 (*.bin *.pcd);;所有文件 (*.*)",
-        )
-        if not file_path:
+        pc_cfg = self._config.get("pointcloud", {})
+        p = pick_pointcloud_file(self, self._project_root, pc_cfg)
+        if p is None:
             self._log.append("已取消选择文件")
             return
-        p = Path(file_path)
         self._panel.set_selected_file(p)
         self._controller.set_current_file(p)
-        self._status.set_status("单文件模式：已选择点云路径")
 
     def _on_pick_nusc_root(self) -> None:
+        if self._panel.ui_data_source() != "nuscenes":
+            info_need_nusc_data_source_for_root(self)
+            return
+
         st = self._controller.state
         if st.workflow == "single_file" and st.current_file is not None:
-            r = QMessageBox.question(
-                self,
-                "切换工作流",
-                "当前为单文件模式。选择 nuScenes 根目录将清空已选单文件路径与未保存结果。\n\n是否继续？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if r != QMessageBox.Yes:
+            if not ask_nusc_root_clears_single_file(self):
                 self._log.append("已取消：保留单文件模式")
                 return
             self._controller.set_current_file(None)
             self._panel.set_selected_file(None)
 
-        default_dir = str(self._project_root)
-        picked = QFileDialog.getExistingDirectory(
-            self, "选择 nuScenes mini 数据集根目录", default_dir
-        )
-        if not picked:
+        root = pick_nuscenes_root_directory(self, self._project_root)
+        if root is None:
             self._log.append("已取消选择 nuScenes 根目录")
             return
-        root = Path(picked)
         self._panel.set_nusc_root(root)
         self._controller.set_nusc_root(root)
-        self._status.set_status("已选择 nuScenes 根目录（请点击「加载数据集」）")
 
     def _on_connect_nusc_clicked(self) -> None:
-        """加载数据集：使用界面当前「导航方式」（默认全数据集，无需用户每次手动选）。"""
         self._controller.connect_nusc(
             nav_mode=self._panel.navigation_mode(),
             scene_token=self._panel.current_scene_token(),
@@ -258,194 +278,68 @@ class MainWindow(QMainWindow):
         self._log.append("日志已清空，结果已清空")
 
     def _on_show_fusion(self) -> None:
-        """
-        融合显示：
-          - 优先显示 last_scene（一键运行产生）
-          - 否则把已有 det/seg 组装成同窗显示
-          - 再不行兜底显示分割点云或原始点云
-        """
         st: AppState = self._controller.state
         if st.loaded_pcd is None or len(st.loaded_pcd.points) == 0:
-            QMessageBox.warning(self, "提示", "请先加载非空点云后再使用融合显示。")
+            warn_need_nonempty_pcd_for_fusion(self)
             return
 
         if st.last_scene is not None:
             self._log.append("融合显示：使用一键运行生成的融合场景（scene）")
-            self._status.set_status("融合显示：scene（检测框+分割）")
             self._render_scene(st.last_scene)
             return
 
         pts_xyz = np.asarray(st.loaded_pcd.points, dtype=np.float32)
 
         try:
-            has_seg = st.last_seg is not None
-            has_det = bool(st.last_det) if st.last_det is not None else False
-
-            if has_seg:
-                seg_out = st.last_seg
-            else:
-                labels = np.zeros((pts_xyz.shape[0],), dtype=np.int32)
-                seg = SegmentationResult(
-                    labels=labels,
-                    id_to_name={0: "background"},
-                    id_to_color={0: [0.7, 0.7, 0.7]},
-                )
-                seg_out = SegmentPipelineOutput(points_xyz=pts_xyz, seg=seg, colored_pcd=None)
-
-            detections = st.last_det or []
-            scene = ResultFusion().fuse(points_xyz=pts_xyz, seg_out=seg_out, detections=detections)
-
-            # 日志摘要：来源与统计
-            src = "检测+分割拼装" if (has_det and has_seg) else "仅检测" if has_det else "仅分割" if has_seg else "空结果拼装"
-            self._log.append(f"融合显示：{src}（点数={pts_xyz.shape[0]:,} | 检测框={len(detections)}）")
-            self._status.set_status(f"融合显示：{src}")
-
-            if has_seg:
-                labels = seg_out.seg.labels
-                uniq, cnt = np.unique(labels, return_counts=True) if labels.size > 0 else ([], [])
-                # 仅输出前 6 类，避免刷屏
-                self._log.append("分割统计（前6类）")
-                for lid, c in list(zip(list(uniq), list(cnt)))[:6]:
-                    name = seg_out.seg.id_to_name.get(int(lid), f"class_{int(lid)}")
-                    self._log.append(f"  - id={int(lid):2d} | {name:12s} | 点数={int(c):,}")
-
+            scene, primary, extra_lines = fuse_partial_for_gui_display(
+                pts_xyz, st.last_seg, st.last_det
+            )
+            self._log.append(primary)
+            for line in extra_lines:
+                self._log.append(line)
             self._render_scene(scene)
             return
         except Exception as e:
             logger.warning("融合显示组装失败，将回退为简单显示：%s", e)
 
         if st.last_seg is not None and getattr(st.last_seg, "colored_pcd", None) is not None:
-            self._log.append("融合显示：回退为仅分割点云显示（未能组装融合场景）")
-            self._status.set_status("融合显示：仅分割点云（回退）")
+            self._log.append("融合显示：回退为仅分割点云显示")
             show_pointcloud(st.last_seg.colored_pcd, window_title="融合显示（仅分割点云）")
         else:
-            self._log.append("融合显示：回退为仅原始点云显示（未能组装融合场景）")
-            self._status.set_status("融合显示：仅原始点云（回退）")
+            self._log.append("融合显示：回退为仅原始点云显示")
             show_pointcloud(st.loaded_pcd, window_title="融合显示（仅原始点云）")
 
     def _on_state(self, state: AppState) -> None:
-        # nuScenes 控件更新
         loader = state.nusc_loader
         nusc_connected = loader is not None and loader.is_connected
-        if nusc_connected:
-            scenes = loader.get_scene_summaries()
-            items = [(s["name"], s["token"]) for s in scenes]
-            self._panel.set_scene_list(items)
-            self._panel.set_nusc_nav_enabled(True, frame_count=loader.frame_count)
-            self._update_nusc_meta()
-        else:
-            self._panel.set_nusc_nav_enabled(False, frame_count=0)
-            self._panel.set_nusc_meta_text("未连接数据集")
 
-        # 路径显示与控制器状态同步（连接 nuScenes 后会清空 current_file）
-        self._panel.set_selected_file(state.current_file)
-        self._panel.set_nusc_root(state.nusc_root)
+        sync_control_panel_to_state(self._panel, state)
 
-        self._panel.apply_nusc_vs_single_file_lock(
-            workflow=state.workflow,
-            nusc_connected=nusc_connected,
-        )
-
-        has_nonempty = state.loaded_pcd is not None and len(state.loaded_pcd.points) > 0
-        has_results = (
-            (state.last_det is not None)
-            or (state.last_seg is not None)
-            or (state.last_scene is not None)
-        )
-        allow_autoload = (
-            state.workflow != "nuscenes"
-            and state.loaded_pcd is None
-            and state.current_file is not None
-            and state.current_file.is_file()
-        )
+        has_nonempty, has_results, allow_autoload = compute_action_button_flags(state)
         self._panel.set_action_buttons_state(
             has_nonempty_pcd=has_nonempty,
             has_results=has_results,
             allow_run_full_autoload=allow_autoload,
+            defense_strict_pipeline=True,
         )
 
-        self._update_workflow_status_line(state, state.nusc_loader, nusc_connected)
-
-    def _update_workflow_status_line(
-        self,
-        state: AppState,
-        loader: Any,
-        nusc_connected: bool,
-    ) -> None:
-        """操作区多行提示 + 状态栏一行摘要。"""
-        blocks: list[str] = []
-        if state.workflow == "none":
-            blocks.append("工作流：未选择 — 请使用「单文件」或「nuScenes」其一作为主流程。")
-        elif state.workflow == "single_file":
-            blocks.append("工作流：单文件点云")
-            if state.current_file:
-                blocks.append(f"当前路径: {state.current_file.as_posix()}")
-        else:
-            blocks.append("工作流：nuScenes mini")
-            if state.nusc_root:
-                blocks.append(f"数据集根目录: {state.nusc_root.as_posix()}")
-            if nusc_connected and loader is not None:
-                blocks.append(f"数据模式: {loader.mode_display_zh()}")
-                blocks.append(f"导航方式: {loader.navigation_display_zh()}")
-                blocks.append(
-                    "当前帧点云: "
-                    + (
-                        f"已载入（{len(state.loaded_pcd.points):,} 点）"
-                        if state.loaded_pcd is not None and len(state.loaded_pcd.points) > 0
-                        else "未载入 — 请先点「加载当前帧点云」"
-                    )
-                )
-            else:
-                blocks.append("数据集: 未连接 — 请点击「加载数据集」")
-
-        if state.loaded_pcd is not None and len(state.loaded_pcd.points) > 0:
-            blocks.append("检测 / 分割 / 一键运行：点云已就绪，可执行。")
-        elif state.workflow == "nuscenes" and nusc_connected:
-            blocks.append("检测 / 分割 / 一键运行：需先载入非空当前帧点云。")
-        elif state.workflow == "single_file" and state.current_file:
-            blocks.append("下一步：点击「加载点云」载入；或直接「一键运行」自动加载单文件。")
-
-        self._panel.set_workflow_status_text("\n".join(blocks))
-
-        # 状态栏短摘要
-        if state.workflow == "nuscenes" and nusc_connected and loader is not None:
-            nav = loader.navigation_display_zh()
-            if state.loaded_pcd is not None and len(state.loaded_pcd.points) > 0:
-                self._status.set_status(f"nuScenes | {nav} | 帧点云已载入，可执行算法")
-            else:
-                self._status.set_status(f"nuScenes | {nav} | 请先加载当前帧点云")
-        elif state.workflow == "single_file":
-            if state.loaded_pcd is not None and len(state.loaded_pcd.points) > 0:
-                self._status.set_status("单文件：点云已载入，可执行算法")
-            else:
-                self._status.set_status("单文件：请选择文件并点击「加载点云」")
-        else:
-            self._status.set_status("请选择单文件或 nuScenes 工作流")
+        self._header.set_mode_line(mode_header_text(self._panel, state, nusc_connected))
+        self._summary.set_summary(
+            build_summary_text(self._panel, state, loader, nusc_connected)
+        )
+        apply_defense_status_bar(self._dstatus, state, loader, nusc_connected)
 
     def _update_nusc_meta(self) -> None:
         loader = self._controller.state.nusc_loader
         if loader is None or not loader.is_connected:
             return
-        n = loader.frame_count
-        if n <= 0:
-            self._panel.set_nusc_meta_text("当前导航下无帧")
-            return
-        idx = self._panel.frame_index()
-        try:
-            rec = loader.get_frame_record(idx)
-            self._panel.set_nusc_meta_text(
-                f"帧 {idx+1}/{n} | 场景: {rec.scene_name} | sample: {rec.sample_token[:8]}... | "
-                f"LiDAR: {rec.lidar_path.name} | 模式: {loader.mode}"
-            )
-        except Exception:
-            self._panel.set_nusc_meta_text(f"帧 {idx+1}/{n}（元数据解析失败）")
+        refresh_nusc_meta_line(self._panel, loader)
 
     def _on_render_request(self, mode: str) -> None:
         st: AppState = self._controller.state
         if mode == "seg":
             if st.last_seg is not None and getattr(st.last_seg, "colored_pcd", None) is not None:
                 self._log.append("显示：语义分割结果（彩色点云）")
-                self._status.set_status("显示：分割结果")
                 self._defer(
                     show_pointcloud,
                     st.last_seg.colored_pcd,
@@ -455,15 +349,13 @@ class MainWindow(QMainWindow):
         if mode == "raw":
             if st.loaded_pcd is not None and len(st.loaded_pcd.points) > 0:
                 self._log.append("显示：原始点云预览")
-                self._status.set_status("显示：点云预览")
                 self._defer(show_pointcloud, st.loaded_pcd, window_title="点云预览")
             elif st.loaded_pcd is not None:
-                QMessageBox.warning(self, "提示", "当前点云为空，无法打开 Open3D 预览。")
+                warn_empty_pcd_cannot_preview(self)
             return
         if mode == "fusion":
             if st.last_scene is not None:
                 self._log.append("显示：融合场景（来自一键运行）")
-                self._status.set_status("显示：融合场景")
                 self._defer(self._render_scene, st.last_scene)
             else:
                 self._defer(self._on_show_fusion)
@@ -482,10 +374,8 @@ class MainWindow(QMainWindow):
                 )
             )
 
-        # Open3D 会阻塞；阻塞期间禁用面板，关闭后恢复
         self._panel.set_busy(True)
         try:
             self._renderer.render(scene)
         finally:
             self._panel.set_busy(False)
-

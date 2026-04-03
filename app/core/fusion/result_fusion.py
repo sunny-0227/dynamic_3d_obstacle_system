@@ -28,6 +28,7 @@ from app.core.detector.base_detector import DetectionBox
 from app.core.geometry.transform import Transform, apply_transform_to_detection_box
 from app.core.pipeline.segment_pipeline import SegmentPipelineOutput
 from app.core.postprocess.box_converter import BoxConverter
+from app.core.segmentor.base_segmentor import SegmentationResult
 from app.utils.logger import get_logger
 
 logger = get_logger("core.fusion.result_fusion")
@@ -127,4 +128,56 @@ class ResultFusion:
             detections=det_std,
             det_obbs=det_obbs,
         )
+
+
+def fuse_partial_for_gui_display(
+    points_xyz: np.ndarray,
+    last_seg: Optional[SegmentPipelineOutput],
+    last_det: Optional[List[DetectionBox]],
+    fusion: Optional[ResultFusion] = None,
+) -> tuple[FusedScene, str, List[str]]:
+    """
+    答辩版「融合显示」：在仅有部分算法结果时，用全零背景分割补齐并与检测框融合。
+
+    与原先 MainWindow._on_show_fusion 中拼装逻辑一致，便于 UI 层只负责弹窗与 Open3D 调度。
+    返回：(融合场景, 主日志行, 附加日志行列表)。
+    """
+    pts = np.asarray(points_xyz, dtype=np.float32).reshape(-1, 3)
+    has_seg = last_seg is not None
+    has_det = bool(last_det) if last_det is not None else False
+
+    if has_seg:
+        seg_out = last_seg
+    else:
+        labels = np.zeros((pts.shape[0],), dtype=np.int32)
+        seg = SegmentationResult(
+            labels=labels,
+            id_to_name={0: "background"},
+            id_to_color={0: [0.7, 0.7, 0.7]},
+        )
+        seg_out = SegmentPipelineOutput(points_xyz=pts, seg=seg, colored_pcd=None)
+
+    detections = list(last_det or [])
+    rf = fusion or ResultFusion()
+    scene = rf.fuse(points_xyz=pts, seg_out=seg_out, detections=detections)
+
+    src = (
+        "检测+分割拼装"
+        if (has_det and has_seg)
+        else "仅检测"
+        if has_det
+        else "仅分割"
+        if has_seg
+        else "空结果拼装"
+    )
+    primary = f"融合显示：{src}（点数={pts.shape[0]:,} | 检测框={len(detections)}）"
+    extra: List[str] = []
+    if has_seg:
+        labels = seg_out.seg.labels
+        uniq, cnt = np.unique(labels, return_counts=True) if labels.size > 0 else ([], [])
+        extra.append("分割统计（前6类）")
+        for lid, c in list(zip(list(uniq), list(cnt)))[:6]:
+            name = seg_out.seg.id_to_name.get(int(lid), f"class_{int(lid)}")
+            extra.append(f"  - id={int(lid):2d} | {name:12s} | 点数={int(c):,}")
+    return scene, primary, extra
 

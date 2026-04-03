@@ -1,6 +1,9 @@
 """
 UI 控制器（里程碑 6）
 
+答辩版界面在「一键运行」等按钮上采用更严格的前置条件（由主窗口 set_action_buttons_state 控制）；
+控制器内仍保留单文件自动加载逻辑，供非 GUI 调用或后续放宽策略时使用。
+
 职责：
   - 管理应用状态（当前文件、点云、nuScenes loader、最近结果）
   - 在后台线程执行耗时任务（加载点云/连接数据集/检测/分割/一键运行）
@@ -278,6 +281,7 @@ class AppController(QObject):
         self.state.last_scene = None
         self.state.workflow = "none"
         self.sig_log.emit("[模式] 已断开 nuScenes，工作流重置为未选择")
+        self.sig_status.emit("就绪")
         self._emit_state()
 
     def load_current_file_pointcloud(self) -> None:
@@ -374,7 +378,8 @@ class AppController(QObject):
                 f"| 导航方式: {nav_label} | 帧数: {n_frames}\n"
                 "| 可直接调整帧索引并点击「加载当前帧点云」（可随时在下拉框切换导航方式）。"
             )
-            # 状态栏由主窗口 _on_state / _update_workflow_status_line 统一带上导航说明
+            # 顶栏/底栏「当前状态」「执行」由 sig_status → 主窗口 _on_controller_status 更新
+            self.sig_status.emit(f"nuScenes 已连接（{nav_label}）｜请加载当前帧点云")
             self._emit_state()
 
         self._run_in_thread(job, done)

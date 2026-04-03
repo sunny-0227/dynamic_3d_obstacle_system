@@ -20,10 +20,10 @@ GUI 提供“执行分割”按钮调用统一分割 pipeline。
   - app.core.pipeline.full_pipeline 提供一键运行入口
   - app.visualization.scene_renderer 在同一 Open3D 视窗渲染点云+分割+检测框
 
-里程碑6：GUI 完善：
-  - app.ui.controller：控制器 + 后台线程任务；区分单文件 / nuScenes 工作流（workflow）
-  - app.ui.widgets.*：控制面板/日志面板/状态栏
-  - app.ui.main_window：主窗口装配；模式切换确认、状态摘要
+里程碑6：GUI 完善（答辩展示版）：
+  - app.ui.controller：控制器 + 后台线程；workflow 与 nuScenes 导航默认逻辑
+  - app.ui.widgets.*：左侧控制 / 顶栏 / 摘要卡片 / 分区状态栏 / 日志
+  - app.ui.main_window：左右分栏 + 顶栏课题信息；严格按钮与数据源单选
 """
 
 import sys
