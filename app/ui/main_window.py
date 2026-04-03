@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from functools import partial
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 from PyQt5.QtCore import QTimer
@@ -161,6 +161,21 @@ class MainWindow(QMainWindow):
     # UI slots
     # -------------------------
     def _on_pick_file(self) -> None:
+        st = self._controller.state
+        if st.workflow == "nuscenes" and st.nusc_loader is not None and st.nusc_loader.is_connected:
+            r = QMessageBox.question(
+                self,
+                "切换工作流",
+                "当前已连接 nuScenes 数据集。选择单文件将断开数据集连接并清空当前点云。\n\n是否继续？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if r != QMessageBox.Yes:
+                self._log.append("已取消：保留 nuScenes 模式")
+                return
+            self._controller.disconnect_nusc()
+            self._panel.set_nusc_root(None)
+
         default_dir = str(
             self._project_root
             / self._config.get("pointcloud", {}).get("default_data_dir", "data")
@@ -177,9 +192,24 @@ class MainWindow(QMainWindow):
         p = Path(file_path)
         self._panel.set_selected_file(p)
         self._controller.set_current_file(p)
-        self._status.set_status("已选择点云文件")
+        self._status.set_status("单文件模式：已选择点云路径")
 
     def _on_pick_nusc_root(self) -> None:
+        st = self._controller.state
+        if st.workflow == "single_file" and st.current_file is not None:
+            r = QMessageBox.question(
+                self,
+                "切换工作流",
+                "当前为单文件模式。选择 nuScenes 根目录将清空已选单文件路径与未保存结果。\n\n是否继续？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if r != QMessageBox.Yes:
+                self._log.append("已取消：保留单文件模式")
+                return
+            self._controller.set_current_file(None)
+            self._panel.set_selected_file(None)
+
         default_dir = str(self._project_root)
         picked = QFileDialog.getExistingDirectory(
             self, "选择 nuScenes mini 数据集根目录", default_dir
@@ -190,7 +220,7 @@ class MainWindow(QMainWindow):
         root = Path(picked)
         self._panel.set_nusc_root(root)
         self._controller.set_nusc_root(root)
-        self._status.set_status("已选择 nuScenes 根目录")
+        self._status.set_status("已选择 nuScenes 根目录（请点击「加载数据集」）")
 
     def _on_nav_changed(self, mode: str) -> None:
         token = self._panel.current_scene_token()
@@ -228,8 +258,8 @@ class MainWindow(QMainWindow):
           - 再不行兜底显示分割点云或原始点云
         """
         st: AppState = self._controller.state
-        if st.loaded_pcd is None:
-            QMessageBox.warning(self, "提示", "请先加载点云")
+        if st.loaded_pcd is None or len(st.loaded_pcd.points) == 0:
+            QMessageBox.warning(self, "提示", "请先加载非空点云后再使用融合显示。")
             return
 
         if st.last_scene is not None:
@@ -289,7 +319,8 @@ class MainWindow(QMainWindow):
     def _on_state(self, state: AppState) -> None:
         # nuScenes 控件更新
         loader = state.nusc_loader
-        if loader is not None and loader.is_connected:
+        nusc_connected = loader is not None and loader.is_connected
+        if nusc_connected:
             scenes = loader.get_scene_summaries()
             items = [(s["name"], s["token"]) for s in scenes]
             self._panel.set_scene_list(items)
@@ -299,14 +330,88 @@ class MainWindow(QMainWindow):
             self._panel.set_nusc_nav_enabled(False, frame_count=0)
             self._panel.set_nusc_meta_text("未连接数据集")
 
-        # 按钮状态：有点云才能检测/分割；有结果才能融合显示
-        has_pcd = state.loaded_pcd is not None
+        # 路径显示与控制器状态同步（连接 nuScenes 后会清空 current_file）
+        self._panel.set_selected_file(state.current_file)
+        self._panel.set_nusc_root(state.nusc_root)
+
+        self._panel.apply_nusc_vs_single_file_lock(
+            workflow=state.workflow,
+            nusc_connected=nusc_connected,
+        )
+
+        has_nonempty = state.loaded_pcd is not None and len(state.loaded_pcd.points) > 0
         has_results = (
             (state.last_det is not None)
             or (state.last_seg is not None)
             or (state.last_scene is not None)
         )
-        self._panel.set_pointcloud_actions_enabled(has_pcd=has_pcd, has_results=has_results)
+        allow_autoload = (
+            state.workflow != "nuscenes"
+            and state.loaded_pcd is None
+            and state.current_file is not None
+            and state.current_file.is_file()
+        )
+        self._panel.set_action_buttons_state(
+            has_nonempty_pcd=has_nonempty,
+            has_results=has_results,
+            allow_run_full_autoload=allow_autoload,
+        )
+
+        self._update_workflow_status_line(state, state.nusc_loader, nusc_connected)
+
+    def _update_workflow_status_line(
+        self,
+        state: AppState,
+        loader: Any,
+        nusc_connected: bool,
+    ) -> None:
+        """操作区多行提示 + 状态栏一行摘要。"""
+        blocks: list[str] = []
+        if state.workflow == "none":
+            blocks.append("工作流：未选择 — 请使用「单文件」或「nuScenes」其一作为主流程。")
+        elif state.workflow == "single_file":
+            blocks.append("工作流：单文件点云")
+            if state.current_file:
+                blocks.append(f"当前路径: {state.current_file.as_posix()}")
+        else:
+            blocks.append("工作流：nuScenes mini")
+            if state.nusc_root:
+                blocks.append(f"数据集根目录: {state.nusc_root.as_posix()}")
+            if nusc_connected and loader is not None:
+                blocks.append(f"数据模式: {loader.mode_display_zh()}")
+                blocks.append(
+                    "当前帧点云: "
+                    + (
+                        f"已载入（{len(state.loaded_pcd.points):,} 点）"
+                        if state.loaded_pcd is not None and len(state.loaded_pcd.points) > 0
+                        else "未载入 — 请先点「加载当前帧点云」"
+                    )
+                )
+            else:
+                blocks.append("数据集: 未连接 — 请点击「加载数据集」")
+
+        if state.loaded_pcd is not None and len(state.loaded_pcd.points) > 0:
+            blocks.append("检测 / 分割 / 一键运行：点云已就绪，可执行。")
+        elif state.workflow == "nuscenes" and nusc_connected:
+            blocks.append("检测 / 分割 / 一键运行：需先载入非空当前帧点云。")
+        elif state.workflow == "single_file" and state.current_file:
+            blocks.append("下一步：点击「加载点云」载入；或直接「一键运行」自动加载单文件。")
+
+        self._panel.set_workflow_status_text("\n".join(blocks))
+
+        # 状态栏短摘要
+        if state.workflow == "nuscenes" and nusc_connected:
+            if state.loaded_pcd is not None and len(state.loaded_pcd.points) > 0:
+                self._status.set_status("nuScenes：帧点云已载入，可执行算法")
+            else:
+                self._status.set_status("nuScenes：请先加载当前帧点云")
+        elif state.workflow == "single_file":
+            if state.loaded_pcd is not None and len(state.loaded_pcd.points) > 0:
+                self._status.set_status("单文件：点云已载入，可执行算法")
+            else:
+                self._status.set_status("单文件：请选择文件并点击「加载点云」")
+        else:
+            self._status.set_status("请选择单文件或 nuScenes 工作流")
 
     def _update_nusc_meta(self) -> None:
         loader = self._controller.state.nusc_loader
@@ -339,10 +444,12 @@ class MainWindow(QMainWindow):
                 )
             return
         if mode == "raw":
-            if st.loaded_pcd is not None:
+            if st.loaded_pcd is not None and len(st.loaded_pcd.points) > 0:
                 self._log.append("显示：原始点云预览")
                 self._status.set_status("显示：点云预览")
                 self._defer(show_pointcloud, st.loaded_pcd, window_title="点云预览")
+            elif st.loaded_pcd is not None:
+                QMessageBox.warning(self, "提示", "当前点云为空，无法打开 Open3D 预览。")
             return
         if mode == "fusion":
             if st.last_scene is not None:

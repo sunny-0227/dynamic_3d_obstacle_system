@@ -65,6 +65,14 @@ class NuScenesMiniLoader:
         """返回当前工作模式：`real` 或 `simulated`。"""
         return self._mode
 
+    def mode_display_zh(self) -> str:
+        """供 GUI 日志/状态栏展示的中文模式说明。"""
+        if self._mode == self.MODE_REAL:
+            return "真实元数据（nuScenes-devkit）"
+        if self._mode == self.MODE_SIMULATED:
+            return "模拟模式（扫描 samples/LIDAR_TOP/*.bin）"
+        return "未知"
+
     @property
     def is_connected(self) -> bool:
         return self._mode in (self.MODE_REAL, self.MODE_SIMULATED)

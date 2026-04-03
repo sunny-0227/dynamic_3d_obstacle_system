@@ -71,6 +71,12 @@ class ControlPanel(QWidget):
         self._btn_load_file.setEnabled(False)
         self._btn_load_file.setMinimumHeight(36)
         file_layout.addWidget(self._btn_load_file)
+        self._hint_single = QLabel(
+            "单文件模式：选择 .bin/.pcd 后点击「加载点云」。连接 nuScenes 后此处将暂时禁用。"
+        )
+        self._hint_single.setWordWrap(True)
+        self._hint_single.setStyleSheet("color: #6c7086; font-size: 12px;")
+        file_layout.addWidget(self._hint_single)
         root.addWidget(file_group)
 
         # ---- nuScenes ----
@@ -130,12 +136,27 @@ class ControlPanel(QWidget):
         self._label_nusc_meta.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         nusc_layout.addWidget(self._label_nusc_meta)
 
+        self._hint_nusc = QLabel(
+            "nuScenes 模式：加载数据集后选择场景与帧索引，再点「加载当前帧点云」。"
+        )
+        self._hint_nusc.setWordWrap(True)
+        self._hint_nusc.setStyleSheet("color: #6c7086; font-size: 12px;")
+        nusc_layout.addWidget(self._hint_nusc)
+
         root.addWidget(nusc_group)
 
         # ---- 操作按钮 ----
         op_group = QGroupBox("操作")
-        op_layout = QHBoxLayout(op_group)
-        op_layout.setSpacing(10)
+        op_layout = QVBoxLayout(op_group)
+        op_layout.setSpacing(8)
+        self._label_workflow = QLabel(
+            "工作流状态：未选择（请使用上方「单文件」或「nuScenes」其一作为主流程）"
+        )
+        self._label_workflow.setWordWrap(True)
+        self._label_workflow.setStyleSheet("color: #89b4fa; font-size: 12px;")
+        op_layout.addWidget(self._label_workflow)
+        row_ops = QHBoxLayout()
+        row_ops.setSpacing(10)
         self._btn_detect = QPushButton("执行检测")
         self._btn_segment = QPushButton("执行分割")
         self._btn_fusion = QPushButton("融合显示")
@@ -144,7 +165,9 @@ class ControlPanel(QWidget):
 
         for b in (self._btn_detect, self._btn_segment, self._btn_fusion, self._btn_full, self._btn_clear):
             b.setMinimumHeight(40)
-            op_layout.addWidget(b)
+            row_ops.addWidget(b)
+
+        op_layout.addLayout(row_ops)
 
         # 初始禁用：没有点云时禁止检测/分割/融合/一键
         self._btn_detect.setEnabled(False)
@@ -200,6 +223,7 @@ class ControlPanel(QWidget):
             self._btn_load_file.setEnabled(False)
         else:
             self._path_file.setText(str(path))
+            # 若处于 nuScenes 锁定，由 apply_nusc_vs_single_file_lock 覆盖
             self._btn_load_file.setEnabled(True)
 
     def set_nusc_root(self, path: Optional[Path]) -> None:
@@ -252,12 +276,36 @@ class ControlPanel(QWidget):
     def set_frame_index(self, idx: int) -> None:
         self._spin_frame.setValue(int(idx))
 
-    def set_pointcloud_actions_enabled(self, has_pcd: bool, has_results: bool) -> None:
-        self._btn_detect.setEnabled(bool(has_pcd))
-        self._btn_segment.setEnabled(bool(has_pcd))
-        # 融合显示依赖结果：至少有检测或分割结果之一
-        self._btn_fusion.setEnabled(bool(has_pcd and has_results))
-        self._btn_full.setEnabled(bool(has_pcd) or self._btn_load_file.isEnabled() or self._btn_nusc_connect.isEnabled())
+    def set_workflow_status_text(self, text: str) -> None:
+        """操作区上方：工作流 / 数据集 / 帧 / 算法可用性摘要。"""
+        self._label_workflow.setText(text)
+
+    def apply_nusc_vs_single_file_lock(
+        self,
+        *,
+        workflow: str,
+        nusc_connected: bool,
+    ) -> None:
+        """
+        nuScenes 已连接时禁用单文件入口；单文件已选路径时仍允许点「选择数据集根目录」切换（由主窗口弹窗确认）。
+        """
+        lock_single = workflow == "nuscenes" and nusc_connected
+        self._btn_select_file.setEnabled(not lock_single)
+        self._btn_load_file.setEnabled(not lock_single and self._path_file.text().strip() != "")
+        self._hint_single.setVisible(not lock_single)
+
+    def set_action_buttons_state(
+        self,
+        *,
+        has_nonempty_pcd: bool,
+        has_results: bool,
+        allow_run_full_autoload: bool,
+    ) -> None:
+        """根据点云与单文件自动加载条件启用检测/分割/融合/一键。"""
+        self._btn_detect.setEnabled(bool(has_nonempty_pcd))
+        self._btn_segment.setEnabled(bool(has_nonempty_pcd))
+        self._btn_fusion.setEnabled(bool(has_nonempty_pcd and has_results))
+        self._btn_full.setEnabled(bool(has_nonempty_pcd or allow_run_full_autoload))
 
     def set_busy(self, busy: bool) -> None:
         """

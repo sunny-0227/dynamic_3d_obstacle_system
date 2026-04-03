@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
+
+WorkflowMode = Literal["none", "single_file", "nuscenes"]
 
 import numpy as np
 import open3d as o3d
@@ -58,6 +60,9 @@ class _TaskThread(QThread):
 
 @dataclass
 class AppState:
+    """workflow：界面主流程，用于区分单文件与 nuScenes，避免混用入口。"""
+
+    workflow: WorkflowMode = "none"
     current_file: Optional[Path] = None
     loaded_pcd: Optional[o3d.geometry.PointCloud] = None
 
@@ -97,6 +102,16 @@ class AppController(QObject):
     def _emit_state(self) -> None:
         self.sig_state.emit(self.state)
 
+    def _reject_empty_pcd(self) -> bool:
+        """若当前点云为空则清空并提示。返回 True 表示可继续。"""
+        pcd = self.state.loaded_pcd
+        if pcd is None or len(pcd.points) == 0:
+            self.state.loaded_pcd = None
+            self.sig_error.emit("点云无效", "点云为空（0 个点），无法继续后续操作。")
+            self.sig_status.emit("点云无效（空）")
+            return False
+        return True
+
     def _store_loaded_pcd(
         self,
         pcd: o3d.geometry.PointCloud,
@@ -112,11 +127,14 @@ class AppController(QObject):
             self.state.last_scene = None
         self.state.loaded_pcd = pcd
 
-    def _notify_pointcloud_loaded(self, success_log: str, *, open_preview: bool) -> None:
+    def _notify_pointcloud_loaded(self, success_log: str, *, open_preview: bool) -> bool:
+        if not self._reject_empty_pcd():
+            return False
         self.sig_log.emit(success_log)
         self.sig_status.emit("点云已加载")
         if open_preview:
             self.sig_request_render.emit("raw")
+        return True
 
     def _load_pcd_on_main_thread(
         self,
@@ -133,8 +151,7 @@ class AppController(QObject):
             pcd = load_pointcloud(path)
             self._store_loaded_pcd(pcd, current=current, clear_algo=clear_algo)
             msg = success_log if success_log is not None else f"加载成功：点数 {len(pcd.points):,}"
-            self._notify_pointcloud_loaded(msg, open_preview=True)
-            ok = True
+            ok = self._notify_pointcloud_loaded(msg, open_preview=True)
         except Exception as e:
             logger.error("主线程加载 .pcd 失败: %s", e, exc_info=True)
             self.sig_error.emit("加载失败", str(e))
@@ -239,9 +256,38 @@ class AppController(QObject):
         self.state.last_det = None
         self.state.last_seg = None
         self.state.last_scene = None
+        if path is not None:
+            self.state.workflow = "single_file"
+            self.state.nusc_loader = None
+            self.state.nusc_root = None
+            self.sig_log.emit(
+                f"[模式] 单文件点云 | 已选文件路径: {path.resolve() if path.is_absolute() else path}"
+            )
+        else:
+            self.state.workflow = "none"
+        self._emit_state()
+
+    def disconnect_nusc(self) -> None:
+        """断开 nuScenes 连接并清空相关状态，用于切换回单文件模式。"""
+        self.state.nusc_loader = None
+        self.state.nusc_root = None
+        self.state.current_file = None
+        self.state.loaded_pcd = None
+        self.state.last_det = None
+        self.state.last_seg = None
+        self.state.last_scene = None
+        self.state.workflow = "none"
+        self.sig_log.emit("[模式] 已断开 nuScenes，工作流重置为未选择")
         self._emit_state()
 
     def load_current_file_pointcloud(self) -> None:
+        if self.state.workflow == "nuscenes":
+            self.sig_error.emit(
+                "当前为 nuScenes 模式",
+                "请使用「加载当前帧点云」载入数据。\n"
+                "若需改用单文件点云，请先选择「选择点云文件」并确认切换到单文件模式。",
+            )
+            return
         if self.state.current_file is None:
             self.sig_error.emit("提示", "请先选择点云文件")
             return
@@ -252,7 +298,7 @@ class AppController(QObject):
             return
 
         self.sig_status.emit("加载点云中…")
-        self.sig_log.emit(f"正在加载点云：{p}")
+        self.sig_log.emit(f"[单文件] 正在加载点云：{p}")
 
         # .pcd 主线程 Open3D；.bin 子线程仅 numpy，主线程再建 PointCloud（避免 Windows 子线程卡死）
         if p.suffix.lower() == ".pcd":
@@ -274,6 +320,8 @@ class AppController(QObject):
     def set_nusc_root(self, root: Optional[Path]) -> None:
         self.state.nusc_root = root
         self.state.nusc_loader = None
+        if root is not None:
+            self.sig_log.emit(f"[nuScenes] 已选择数据集根目录（尚未连接）: {root.as_posix()}")
         self._emit_state()
 
     def connect_nusc(self) -> None:
@@ -293,9 +341,19 @@ class AppController(QObject):
 
         def done(loader: NuScenesMiniLoader):
             self.state.nusc_loader = loader
-            mode = loader.mode
-            self.sig_log.emit(f"nuScenes 连接成功（mode={mode}）")
-            self.sig_status.emit("nuScenes 已连接")
+            self.state.workflow = "nuscenes"
+            self.state.current_file = None
+            self.state.loaded_pcd = None
+            self.state.last_det = None
+            self.state.last_seg = None
+            self.state.last_scene = None
+            root = self.state.nusc_root
+            self.sig_log.emit(
+                f"[模式] nuScenes 数据集 | 根目录: {root}\n"
+                f"| 数据模式: {loader.mode_display_zh()}（内部 mode={loader.mode}）\n"
+                "| 请选择导航方式与场景后，设置帧索引并点击「加载当前帧点云」。"
+            )
+            self.sig_status.emit("nuScenes 已连接 — 请加载当前帧点云")
             self._emit_state()
 
         self._run_in_thread(job, done)
@@ -332,6 +390,12 @@ class AppController(QObject):
 
         lp = rec.lidar_path
         success_log = f"已加载 nuScenes 帧：{idx+1}/{rec.frame_count} | {rec.lidar_path.name}"
+        if loader is not None:
+            self.sig_log.emit(
+                f"[nuScenes] 场景: {rec.scene_name} | 帧索引: {idx}（0 基）/ 共 {rec.frame_count} 帧 | "
+                f"LiDAR: {lp.as_posix()}\n"
+                f"| 导航: {loader.navigation_mode} | 数据模式: {loader.mode_display_zh()}"
+            )
         if lp.suffix.lower() == ".pcd":
             self.sig_status.emit("加载 nuScenes 点云中…")
             self._load_pcd_on_main_thread(
@@ -355,8 +419,8 @@ class AppController(QObject):
     # 对外动作：算法
     # -----------------------------
     def run_detect(self) -> None:
-        if self.state.loaded_pcd is None:
-            self.sig_error.emit("提示", "请先加载点云")
+        if self.state.loaded_pcd is None or len(self.state.loaded_pcd.points) == 0:
+            self.sig_error.emit("提示", "请先加载非空点云后再执行检测。")
             return
         self._ensure_pipelines()
         pts = np.asarray(self.state.loaded_pcd.points, dtype=np.float32)
@@ -376,8 +440,8 @@ class AppController(QObject):
         self._run_in_thread(job, done)
 
     def run_segment(self) -> None:
-        if self.state.loaded_pcd is None:
-            self.sig_error.emit("提示", "请先加载点云")
+        if self.state.loaded_pcd is None or len(self.state.loaded_pcd.points) == 0:
+            self.sig_error.emit("提示", "请先加载非空点云后再执行分割。")
             return
         self._ensure_pipelines()
         pts = np.asarray(self.state.loaded_pcd.points, dtype=np.float32)
@@ -397,7 +461,18 @@ class AppController(QObject):
         self._run_in_thread(job, done)
 
     def run_full(self) -> None:
-        # 一键运行：若未加载但有 current_file 则先加载再跑（单文件演示更顺畅）
+        # nuScenes：必须先加载当前帧点云（禁止静默用磁盘路径自动加载）
+        if self.state.workflow == "nuscenes":
+            if self.state.loaded_pcd is None or len(self.state.loaded_pcd.points) == 0:
+                self.sig_error.emit(
+                    "无法一键运行",
+                    "请先点击「加载当前帧点云」载入当前帧，并确认点云非空后再执行一键运行。",
+                )
+                return
+            self._run_full_pipeline()
+            return
+
+        # 单文件：若未加载但有 current_file 则先加载再跑（演示更顺畅）
         if self.state.loaded_pcd is None and self.state.current_file is not None and self.state.current_file.is_file():
             cf = self.state.current_file
             if cf.suffix.lower() == ".pcd":
@@ -429,9 +504,19 @@ class AppController(QObject):
             return
 
         if self.state.loaded_pcd is None:
-            self.sig_error.emit("提示", "请先选择/加载点云或加载 nuScenes 当前帧点云")
+            self.sig_error.emit(
+                "无法一键运行",
+                "请先加载点云：单文件模式请点击「加载点云」；nuScenes 模式请先连接数据集并「加载当前帧点云」。",
+            )
             return
 
+        if len(self.state.loaded_pcd.points) == 0:
+            self.sig_error.emit("无法一键运行", "当前点云为空，请重新加载有效点云。")
+            return
+
+        self._run_full_pipeline()
+
+    def _run_full_pipeline(self) -> None:
         self._ensure_pipelines()
         pts = np.asarray(self.state.loaded_pcd.points, dtype=np.float32)
         self.sig_status.emit("一键运行中…")
