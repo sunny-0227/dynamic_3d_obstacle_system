@@ -1,7 +1,7 @@
 """
-主窗口 — 毕业设计答辩展示版 UI
+主窗口 — 三维障碍物检测与分割科研系统 UI
 
-布局：顶栏标题区 | 左控制区（固定宽） + 右摘要与日志 | 底部分区状态栏。
+布局：顶栏标题区 | 左控制区（固定宽） + 右摘要与系统日志 | 底部分区状态栏。
 保持与 AppController 的既有信号/槽约定，不修改算法与数据集逻辑。
 """
 
@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QMainWindow,
+    QMessageBox,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -60,8 +61,9 @@ from app.visualization.scene_renderer import RenderOptions, SceneRenderer
 
 logger = get_logger("ui.main_window_defense")
 
-# 课题副标题（可通过 config app.thesis_title 覆盖）
-DEFAULT_THESIS_TITLE = "面向动态场景的三维障碍物检测与分割系统研究"
+# 主标题、副标题默认值（可通过 config app.main_title / app.subtitle 覆盖；兼容旧键 app.thesis_title）
+DEFAULT_MAIN_TITLE = "面向动态场景的三维障碍物检测与分割系统研究"
+DEFAULT_SUBTITLE = "三维点云感知与分析系统"
 
 
 class MainWindow(QMainWindow):
@@ -77,7 +79,7 @@ class MainWindow(QMainWindow):
         self._apply_style()
         self._wire()
 
-        self._controller.sig_log.emit("主窗口初始化完成（答辩展示版 UI）")
+        self._controller.sig_log.emit("主窗口初始化完成")
         QTimer.singleShot(0, lambda: self._on_state(self._controller.state))
 
     @staticmethod
@@ -86,10 +88,15 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         app_cfg = self._config.get("app", {})
-        app_name = app_cfg.get("name", "动态3D障碍物感知系统")
-        thesis = app_cfg.get("thesis_title", DEFAULT_THESIS_TITLE)
+        # 主标题：优先 main_title，其次兼容旧配置 thesis_title
+        main_title = (
+            app_cfg.get("main_title")
+            or app_cfg.get("thesis_title")
+            or DEFAULT_MAIN_TITLE
+        )
+        subtitle = app_cfg.get("subtitle") or DEFAULT_SUBTITLE
 
-        self.setWindowTitle(f"{app_name} ｜ 答辩演示")
+        self.setWindowTitle(main_title)
         self.setMinimumSize(1120, 780)
 
         central = QWidget()
@@ -99,7 +106,7 @@ class MainWindow(QMainWindow):
         outer.setSpacing(10)
 
         # 顶部标题区
-        self._header = DefenseHeader(app_name, thesis, self)
+        self._header = DefenseHeader(main_title, subtitle, self)
         outer.addWidget(self._header)
 
         # 左右分栏
@@ -117,7 +124,7 @@ class MainWindow(QMainWindow):
         right = QVBoxLayout()
         right.setSpacing(10)
         self._summary = DataSummaryCard()
-        self._log = LogPanel(max_lines=800)
+        self._log = LogPanel(title="系统日志", max_lines=800)
         right.addWidget(self._summary, stretch=0)
         right.addWidget(self._log, stretch=1)
         split.addLayout(right, stretch=1)
@@ -164,8 +171,8 @@ class MainWindow(QMainWindow):
 
     def _on_controller_status(self, message: str) -> None:
         msg = str(message)
-        self._header.set_status_line(f"当前状态：{msg}")
-        self._dstatus.set_exec_status(f"执行：{msg}")
+        self._header.set_status_line(f"系统状态：{msg}")
+        self._dstatus.set_exec_status(f"任务状态：{msg}")
 
     def _on_panel_data_source(self, src: str) -> None:
         """切换数据源单选：必要时确认并清理另一侧状态。"""
@@ -284,7 +291,7 @@ class MainWindow(QMainWindow):
             return
 
         if st.last_scene is not None:
-            self._log.append("融合显示：使用一键运行生成的融合场景（scene）")
+            self._log.append("融合显示：使用一键分析生成的融合场景（scene）")
             self._render_scene(st.last_scene)
             return
 
@@ -345,6 +352,17 @@ class MainWindow(QMainWindow):
                     st.last_seg.colored_pcd,
                     window_title="语义分割结果（彩色）",
                 )
+            elif st.last_seg is not None:
+                # 分割成功但着色/Open3D 点云未生成时，避免「自动预览」静默无反馈
+                self._log.append(
+                    "显示：分割已完成，但未生成彩色点云，已跳过 Open3D 预览。"
+                )
+                QMessageBox.information(
+                    self,
+                    "提示",
+                    "分割已完成，但当前结果未生成彩色点云，无法打开 Open3D 彩色预览。\n"
+                    "可使用「融合显示」或右侧摘要查看分割相关信息。",
+                )
             return
         if mode == "raw":
             if st.loaded_pcd is not None and len(st.loaded_pcd.points) > 0:
@@ -355,7 +373,7 @@ class MainWindow(QMainWindow):
             return
         if mode == "fusion":
             if st.last_scene is not None:
-                self._log.append("显示：融合场景（来自一键运行）")
+                self._log.append("显示：融合场景（来自一键分析）")
                 self._defer(self._render_scene, st.last_scene)
             else:
                 self._defer(self._on_show_fusion)

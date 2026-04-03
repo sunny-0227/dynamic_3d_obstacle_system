@@ -1,6 +1,5 @@
 """
-答辩版常用 QMessageBox 封装（文案与按钮组合与原先 MainWindow 完全一致）。
-仅做结构整理，不改变任何用户可见提示。
+常用 QMessageBox 封装（集中管理提示文案与按钮组合，便于维护）。
 """
 
 from __future__ import annotations

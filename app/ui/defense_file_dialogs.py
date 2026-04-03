@@ -1,5 +1,5 @@
 """
-答辩版文件/目录选择（QFileDialog），默认目录与过滤器与原先 MainWindow 一致。
+文件/目录选择（QFileDialog），默认目录与过滤器与主窗口约定一致。
 使用 pathlib.Path，兼容 Windows 路径。
 """
 

@@ -1,5 +1,5 @@
 """
-运行日志面板（答辩版：加大可视区域、等宽字体、易读配色）
+系统日志面板：等宽字体、大可视区域，用于展示操作记录与算法输出（Windows 兼容）。
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import QGroupBox, QPlainTextEdit, QVBoxLayout
 
 
 class LogPanel(QGroupBox):
-    def __init__(self, title: str = "运行日志", max_lines: int = 800, parent=None):
+    def __init__(self, title: str = "系统日志", max_lines: int = 800, parent=None):
         super().__init__(title, parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 12, 8, 8)
@@ -23,7 +23,7 @@ class LogPanel(QGroupBox):
         else:
             mono_font.setPointSize(10)
         self._text.setFont(mono_font)
-        self._text.setPlaceholderText("操作与算法输出将显示在此处…")
+        self._text.setPlaceholderText("系统操作与算法输出将显示在此处…")
         layout.addWidget(self._text)
 
     def append(self, message: str) -> None:

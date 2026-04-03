@@ -1,5 +1,5 @@
 """
-答辩版 UI 状态文案与底栏摘要（纯展示逻辑）
+主界面状态文案与底栏摘要（纯展示逻辑）
 
 从 MainWindow 拆出，避免主窗口同时承担布局与大量字符串拼装；
 不涉及业务状态修改，仅根据 AppState + 控件当前选项生成展示文本。
@@ -16,13 +16,13 @@ from app.ui.widgets.defense_status_bar import DefenseStatusBar
 
 def mode_header_text(panel: ControlPanel, state: AppState, nusc_connected: bool) -> str:
     if state.workflow == "nuscenes" and nusc_connected:
-        return "当前模式：nuScenes mini 数据集"
+        return "工作模式：nuScenes mini 数据集"
     if state.workflow == "single_file":
-        return "当前模式：单文件点云"
+        return "工作模式：单文件点云"
     src = panel.ui_data_source()
     if src == "nuscenes":
-        return "当前模式：nuScenes（尚未连接数据集）"
-    return "当前模式：单文件点云（尚未选择文件）"
+        return "工作模式：nuScenes（尚未连接数据集）"
+    return "工作模式：单文件点云（尚未选择文件）"
 
 
 def build_summary_text(

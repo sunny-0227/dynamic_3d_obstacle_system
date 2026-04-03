@@ -1,12 +1,12 @@
 """
 UI 控制器（里程碑 6）
 
-答辩版界面在「一键运行」等按钮上采用更严格的前置条件（由主窗口 set_action_buttons_state 控制）；
+主界面在「一键分析」等按钮上采用更严格的前置条件（由主窗口 set_action_buttons_state 控制）；
 控制器内仍保留单文件自动加载逻辑，供非 GUI 调用或后续放宽策略时使用。
 
 职责：
   - 管理应用状态（当前文件、点云、nuScenes loader、最近结果）
-  - 在后台线程执行耗时任务（加载点云/连接数据集/检测/分割/一键运行）
+  - 在后台线程执行耗时任务（加载点云/连接数据集/检测/分割/一键分析）
   - 在主线程触发 Open3D 显示（渲染仍会阻塞，但计算尽量异步）
   - 统一异常提示与日志输出
 """
@@ -519,23 +519,23 @@ class AppController(QObject):
         if self.state.workflow == "nuscenes":
             if self.state.loaded_pcd is None or len(self.state.loaded_pcd.points) == 0:
                 self.sig_error.emit(
-                    "无法一键运行",
-                    "请先点击「加载当前帧点云」载入当前帧，并确认点云非空后再执行一键运行。",
+                    "无法一键分析",
+                    "请先点击「加载当前帧点云」载入当前帧，并确认点云非空后再执行一键分析。",
                 )
                 return
             self._run_full_pipeline()
             return
 
-        # 单文件：若未加载但有 current_file 则先加载再跑（演示更顺畅）
+        # 单文件：若未加载但有 current_file 则先加载再跑（单文件流程更顺畅）
         if self.state.loaded_pcd is None and self.state.current_file is not None and self.state.current_file.is_file():
             cf = self.state.current_file
             if cf.suffix.lower() == ".pcd":
-                self.sig_log.emit("一键运行：点云未加载，在主线程加载 .pcd …")
+                self.sig_log.emit("一键分析：点云未加载，在主线程加载 .pcd …")
                 self.sig_busy.emit(True)
                 try:
                     self._store_loaded_pcd(load_pointcloud(cf))
                     self._emit_state()
-                    # 须等 busy 收尾后再启动一键，否则 _run_in_thread 会判「已有任务」
+                    # 须等 busy 收尾后再启动一键分析，否则 _run_in_thread 会判「已有任务」
                     QTimer.singleShot(0, self.run_full)
                 except Exception as e:
                     self.sig_error.emit("加载失败", str(e))
@@ -544,7 +544,7 @@ class AppController(QObject):
                     self._emit_state()
                 return
 
-            self.sig_log.emit("一键运行：点云未加载，先自动加载…")
+            self.sig_log.emit("一键分析：点云未加载，先自动加载…")
 
             def job_load():
                 return load_points_xyz_numpy(cf)
@@ -559,13 +559,13 @@ class AppController(QObject):
 
         if self.state.loaded_pcd is None:
             self.sig_error.emit(
-                "无法一键运行",
+                "无法一键分析",
                 "请先加载点云：单文件模式请点击「加载点云」；nuScenes 模式请先连接数据集并「加载当前帧点云」。",
             )
             return
 
         if len(self.state.loaded_pcd.points) == 0:
-            self.sig_error.emit("无法一键运行", "当前点云为空，请重新加载有效点云。")
+            self.sig_error.emit("无法一键分析", "当前点云为空，请重新加载有效点云。")
             return
 
         self._run_full_pipeline()
@@ -573,16 +573,16 @@ class AppController(QObject):
     def _run_full_pipeline(self) -> None:
         self._ensure_pipelines()
         pts = np.asarray(self.state.loaded_pcd.points, dtype=np.float32)
-        self.sig_status.emit("一键运行中…")
-        self.sig_log.emit("开始一键运行（分割+检测+融合）…")
+        self.sig_status.emit("一键分析中…")
+        self.sig_log.emit("开始一键分析（分割+检测+融合）…")
 
         def job():
             return self._full_pipeline.run(pts)
 
         def done(scene):
             self.state.last_scene = scene
-            self.sig_log.emit("一键运行完成（已生成融合场景）")
-            self.sig_status.emit("一键运行完成")
+            self.sig_log.emit("一键分析完成（已生成融合场景）")
+            self.sig_status.emit("一键分析完成")
             self._emit_state()
             self.sig_request_render.emit("fusion")
 

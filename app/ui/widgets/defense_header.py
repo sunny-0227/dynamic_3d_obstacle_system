@@ -1,5 +1,5 @@
 """
-答辩展示版顶部标题区：软件名、课题副标题、当前模式、当前状态。
+主窗口顶部标题区：课题主标题、副标题、工作模式与系统状态（科研/毕设风格文案）。
 """
 
 from __future__ import annotations
@@ -8,30 +8,30 @@ from PyQt5.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 
 class DefenseHeader(QWidget):
-    """主窗口顶部信息条，便于答辩时一眼看到模式与状态。"""
+    """顶栏信息条：突出正式标题，并展示当前工作模式与系统状态。"""
 
     def __init__(
         self,
-        app_name: str,
-        thesis_title: str,
+        main_title: str,
+        subtitle: str,
         parent=None,
     ) -> None:
         super().__init__(parent)
-        self._lbl_app = QLabel(app_name)
-        self._lbl_app.setObjectName("defenseAppTitle")
-        self._lbl_thesis = QLabel(thesis_title)
-        self._lbl_thesis.setObjectName("defenseThesisTitle")
-        self._lbl_thesis.setWordWrap(True)
-        self._lbl_mode = QLabel("当前模式：未选择数据源")
+        self._lbl_main = QLabel(main_title)
+        self._lbl_main.setObjectName("defenseAppTitle")
+        self._lbl_sub = QLabel(subtitle)
+        self._lbl_sub.setObjectName("defenseThesisTitle")
+        self._lbl_sub.setWordWrap(True)
+        self._lbl_mode = QLabel("工作模式：未选择数据源")
         self._lbl_mode.setObjectName("defenseModeLine")
-        self._lbl_status = QLabel("当前状态：就绪")
+        self._lbl_status = QLabel("系统状态：就绪")
         self._lbl_status.setObjectName("defenseStatusLine")
 
         lay = QVBoxLayout(self)
         lay.setSpacing(4)
         lay.setContentsMargins(12, 10, 12, 10)
-        lay.addWidget(self._lbl_app)
-        lay.addWidget(self._lbl_thesis)
+        lay.addWidget(self._lbl_main)
+        lay.addWidget(self._lbl_sub)
         lay.addWidget(self._lbl_mode)
         lay.addWidget(self._lbl_status)
 

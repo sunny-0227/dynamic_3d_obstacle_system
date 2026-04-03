@@ -1,7 +1,7 @@
 """
-答辩展示版左侧控制面板
+左侧控制面板（科研/毕设主界面）
 
-模块顺序：数据源模式 → nuScenes mini → 单文件点云 → 执行操作。
+模块顺序：数据源模式 → nuScenes mini → 单文件点云 → 执行处理。
 通过单选框区分数据源，避免两种模式控件同时可操作造成混淆。
 """
 
@@ -169,8 +169,8 @@ class ControlPanel(QWidget):
         file_layout.addWidget(self._btn_load_file)
         root.addWidget(self._file_group)
 
-        # ---------- 4) 执行操作 ----------
-        op_group = QGroupBox("④ 执行操作")
+        # ---------- 4) 执行处理 ----------
+        op_group = QGroupBox("④ 执行处理")
         op_layout = QVBoxLayout(op_group)
         op_layout.setSpacing(8)
 
@@ -186,7 +186,7 @@ class ControlPanel(QWidget):
         row_alg.addWidget(self._btn_fusion)
         op_layout.addLayout(row_alg)
 
-        self._btn_full = QPushButton("一键运行（检测 + 分割 + 融合）")
+        self._btn_full = QPushButton("一键分析（检测 + 分割 + 融合）")
         self._btn_full.setObjectName("btnOneClick")
         self._btn_full.setMinimumHeight(44)
         self._btn_full.setEnabled(False)
@@ -341,8 +341,8 @@ class ControlPanel(QWidget):
         defense_strict_pipeline: bool,
     ) -> None:
         """
-        defense_strict_pipeline=True：检测/分割/融合/一键均要求已载入非空点云；
-        一键运行不再在未加载点云时通过「自动加载」启用（答辩流程更清晰）。
+        defense_strict_pipeline=True：检测/分割/融合/一键分析均要求已载入非空点云；
+        一键分析不再在未加载点云时通过「自动加载」启用（流程约束更严格）。
         """
         can = bool(has_nonempty_pcd)
         self._btn_detect.setEnabled(can)

@@ -137,9 +137,9 @@ def fuse_partial_for_gui_display(
     fusion: Optional[ResultFusion] = None,
 ) -> tuple[FusedScene, str, List[str]]:
     """
-    答辩版「融合显示」：在仅有部分算法结果时，用全零背景分割补齐并与检测框融合。
+    主界面「融合显示」：在仅有部分算法结果时，用全零背景分割补齐并与检测框融合。
 
-    与原先 MainWindow._on_show_fusion 中拼装逻辑一致，便于 UI 层只负责弹窗与 Open3D 调度。
+    与 MainWindow 中融合显示拼装逻辑一致，便于 UI 层只负责弹窗与 Open3D 调度。
     返回：(融合场景, 主日志行, 附加日志行列表)。
     """
     pts = np.asarray(points_xyz, dtype=np.float32).reshape(-1, 3)

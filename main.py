@@ -17,13 +17,13 @@ GUI 提供“执行分割”按钮调用统一分割 pipeline。
 里程碑5：检测框与分割结果的统一坐标融合：
   - app.core.geometry.transform 提供 SE(3) 变换（旋转/平移/齐次矩阵）
   - app.core.fusion.result_fusion 负责输出对齐到同一坐标系的 FusedScene
-  - app.core.pipeline.full_pipeline 提供一键运行入口
+  - app.core.pipeline.full_pipeline 提供一键分析入口
   - app.visualization.scene_renderer 在同一 Open3D 视窗渲染点云+分割+检测框
 
-里程碑6：GUI 完善（答辩展示版）：
+里程碑6：GUI 完善（科研系统主界面）：
   - app.ui.controller：控制器 + 后台线程；workflow 与 nuScenes 导航默认逻辑
-  - app.ui.widgets.*：左侧控制 / 顶栏 / 摘要卡片 / 分区状态栏 / 日志
-  - app.ui.main_window：左右分栏 + 顶栏课题信息；严格按钮与数据源单选
+  - app.ui.widgets.*：左侧控制 / 顶栏 / 摘要卡片 / 分区状态栏 / 系统日志
+  - app.ui.main_window：左右分栏 + 顶栏课题主副标题；严格按钮与数据源单选
 """
 
 import sys
@@ -75,9 +75,10 @@ def main() -> None:
 
     logger = get_logger("main")
     app_info = config.get("app", {})
+    _default_display_name = "面向动态场景的三维障碍物检测与分割系统研究"
     logger.info(
         "启动 %s v%s | 阶段: %s",
-        app_info.get("name", "动态3D障碍物感知系统"),
+        app_info.get("name") or app_info.get("main_title") or _default_display_name,
         app_info.get("version", "1.0.0"),
         app_info.get("stage", "phase5_fusion_fullrun"),
     )
@@ -93,7 +94,11 @@ def main() -> None:
         pass
 
     app = QApplication(sys.argv)
-    app.setApplicationName(app_info.get("name", "动态3D障碍物感知系统"))
+    app.setApplicationName(
+        app_info.get("name")
+        or app_info.get("main_title")
+        or "面向动态场景的三维障碍物检测与分割系统研究"
+    )
     app.setApplicationVersion(app_info.get("version", "1.0.0"))
 
     # 4. 创建并显示主窗口

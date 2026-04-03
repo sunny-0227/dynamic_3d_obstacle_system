@@ -1,5 +1,5 @@
 """
-答辩版主窗口 QSS（与原先 MainWindow._apply_style 内容一致，便于维护与复用）。
+主窗口 QSS（科研系统深色主题，便于维护与复用）。
 """
 
 from __future__ import annotations
