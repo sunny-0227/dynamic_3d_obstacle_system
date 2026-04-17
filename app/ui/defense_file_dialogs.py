@@ -39,3 +39,10 @@ def pick_nuscenes_root_directory(parent: QWidget, project_root: Path) -> Optiona
         parent, "选择 nuScenes mini 数据集根目录", default_dir
     )
     return Path(picked) if picked else None
+
+
+def pick_realtime_stream_directory(parent: QWidget, project_root: Path) -> Optional[Path]:
+    """选择实时 Mock 点云流目录；取消返回 None。"""
+    default_dir = str(project_root / "data")
+    picked = QFileDialog.getExistingDirectory(parent, "选择实时点云流目录（Mock）", default_dir)
+    return Path(picked) if picked else None

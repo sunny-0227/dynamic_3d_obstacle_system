@@ -1,8 +1,8 @@
 """
 左侧控制面板（科研/毕设主界面）
 
-模块顺序：数据源模式 → nuScenes mini → 单文件点云 → 执行处理。
-通过单选框区分数据源，避免两种模式控件同时可操作造成混淆。
+模块顺序：运行模式 → 离线数据源模式 → nuScenes mini → 单文件点云 → 实时模式 → 执行处理。
+通过显式模式切换避免离线与实时入口混用。
 """
 
 from __future__ import annotations
@@ -28,7 +28,10 @@ from PyQt5.QtWidgets import (
 
 
 class ControlPanel(QWidget):
-    # 数据源（界面层首选，与控制器 workflow 同步）
+    # 运行模式
+    sig_runtime_mode_changed = pyqtSignal(str)  # "offline" | "realtime"
+
+    # 离线数据源（界面层首选，与控制器 workflow 同步）
     sig_data_source_changed = pyqtSignal(str)  # "single_file" | "nuscenes"
 
     sig_select_file = pyqtSignal()
@@ -42,6 +45,14 @@ class ControlPanel(QWidget):
     sig_next_frame = pyqtSignal()
     sig_load_current_frame = pyqtSignal()
 
+    # 实时模式
+    sig_select_realtime_dir = pyqtSignal()
+    sig_start_realtime = pyqtSignal()
+    sig_stop_realtime = pyqtSignal()
+    sig_start_realtime_analysis = pyqtSignal()
+    sig_stop_realtime_analysis = pyqtSignal()
+
+    # 离线算法操作
     sig_run_detect = pyqtSignal()
     sig_run_segment = pyqtSignal()
     sig_show_fusion = pyqtSignal()
@@ -52,6 +63,7 @@ class ControlPanel(QWidget):
         super().__init__(parent)
         self._enabled_cache: dict[int, bool] = {}
         self._block_source_emit = False
+        self._block_runtime_emit = False
         self._fixed_width = 420
         self.setFixedWidth(self._fixed_width)
 
@@ -59,8 +71,22 @@ class ControlPanel(QWidget):
         root.setSpacing(10)
         root.setContentsMargins(0, 0, 8, 0)
 
-        # ---------- 1) 数据源模式 ----------
-        mode_group = QGroupBox("① 数据源模式")
+        # ---------- 0) 运行模式 ----------
+        runtime_group = QGroupBox("⓪ 运行模式")
+        runtime_lay = QVBoxLayout(runtime_group)
+        runtime_lay.setSpacing(8)
+        self._radio_offline = QRadioButton("离线模式")
+        self._radio_realtime = QRadioButton("实时模式")
+        self._btn_group_runtime = QButtonGroup(self)
+        self._btn_group_runtime.addButton(self._radio_offline, 0)
+        self._btn_group_runtime.addButton(self._radio_realtime, 1)
+        self._radio_offline.setChecked(True)
+        runtime_lay.addWidget(self._radio_offline)
+        runtime_lay.addWidget(self._radio_realtime)
+        root.addWidget(runtime_group)
+
+        # ---------- 1) 离线数据源模式 ----------
+        mode_group = QGroupBox("① 离线数据源模式")
         mode_lay = QVBoxLayout(mode_group)
         mode_lay.setSpacing(8)
         self._radio_single = QRadioButton("单文件点云（.bin / .pcd）")
@@ -71,7 +97,7 @@ class ControlPanel(QWidget):
         self._radio_single.setChecked(True)
         mode_lay.addWidget(self._radio_single)
         mode_lay.addWidget(self._radio_nusc)
-        hint_mode = QLabel("请先选择一种数据源；未选中的模块将禁用，避免误操作。")
+        hint_mode = QLabel("离线模式下请选择一种数据源；未选中的模块将禁用。")
         hint_mode.setWordWrap(True)
         hint_mode.setStyleSheet("color: #6c7086; font-size: 11px;")
         mode_lay.addWidget(hint_mode)
@@ -139,13 +165,6 @@ class ControlPanel(QWidget):
         self._label_nusc_meta.setWordWrap(True)
         self._label_nusc_meta.setStyleSheet("color: #bac2de; font-size: 11px;")
         nusc_layout.addWidget(self._label_nusc_meta)
-
-        hint_nusc = QLabel(
-            "连接后默认「全数据集」导航；可直接调帧并点「加载当前帧点云」。"
-        )
-        hint_nusc.setWordWrap(True)
-        hint_nusc.setStyleSheet("color: #6c7086; font-size: 11px;")
-        nusc_layout.addWidget(hint_nusc)
         root.addWidget(self._nusc_group)
 
         # ---------- 3) 单文件 ----------
@@ -169,8 +188,48 @@ class ControlPanel(QWidget):
         file_layout.addWidget(self._btn_load_file)
         root.addWidget(self._file_group)
 
-        # ---------- 4) 执行处理 ----------
-        op_group = QGroupBox("④ 执行处理")
+        # ---------- 4) 实时模式 ----------
+        self._realtime_group = QGroupBox("④ 实时模式")
+        rt_layout = QVBoxLayout(self._realtime_group)
+        rt_layout.setSpacing(6)
+
+        row_rt_dir = QHBoxLayout()
+        self._btn_rt_dir = QPushButton("选择实时流目录")
+        self._path_rt_dir = QLineEdit()
+        self._path_rt_dir.setReadOnly(True)
+        self._path_rt_dir.setPlaceholderText("未选择（Mock Camera 目录）")
+        self._path_rt_dir.setMinimumHeight(30)
+        row_rt_dir.addWidget(self._btn_rt_dir)
+        row_rt_dir.addWidget(self._path_rt_dir, stretch=1)
+        rt_layout.addLayout(row_rt_dir)
+
+        row_rt_ctrl = QHBoxLayout()
+        self._btn_rt_start = QPushButton("启动实时模式")
+        self._btn_rt_stop = QPushButton("停止实时模式")
+        self._btn_rt_stop.setEnabled(False)
+        row_rt_ctrl.addWidget(self._btn_rt_start)
+        row_rt_ctrl.addWidget(self._btn_rt_stop)
+        rt_layout.addLayout(row_rt_ctrl)
+
+        row_rt_an = QHBoxLayout()
+        self._btn_rt_an_start = QPushButton("开始实时分析")
+        self._btn_rt_an_stop = QPushButton("停止实时分析")
+        self._btn_rt_an_start.setEnabled(False)
+        self._btn_rt_an_stop.setEnabled(False)
+        row_rt_an.addWidget(self._btn_rt_an_start)
+        row_rt_an.addWidget(self._btn_rt_an_stop)
+        rt_layout.addLayout(row_rt_an)
+
+        self._lbl_rt_src = QLabel("当前数据源：Mock")
+        self._lbl_rt_fps = QLabel("当前 FPS：0.0")
+        self._lbl_rt_pts = QLabel("当前帧点数：0")
+        for lab in (self._lbl_rt_src, self._lbl_rt_fps, self._lbl_rt_pts):
+            lab.setStyleSheet("color: #bac2de; font-size: 12px;")
+            rt_layout.addWidget(lab)
+        root.addWidget(self._realtime_group)
+
+        # ---------- 5) 离线执行处理 ----------
+        op_group = QGroupBox("⑤ 离线执行处理")
         op_layout = QVBoxLayout(op_group)
         op_layout.setSpacing(8)
 
@@ -199,7 +258,7 @@ class ControlPanel(QWidget):
         root.addWidget(op_group)
         root.addStretch(1)
 
-        # 信号：用 buttonClicked 避免两个 QRadioButton 的 toggled 连续触发两次
+        self._btn_group_runtime.buttonClicked.connect(self._on_runtime_button_clicked)
         self._btn_group_source.buttonClicked.connect(self._on_source_button_clicked)
 
         self._btn_select_file.clicked.connect(self.sig_select_file.emit)
@@ -213,6 +272,12 @@ class ControlPanel(QWidget):
         self._btn_next.clicked.connect(self.sig_next_frame.emit)
         self._btn_load_frame.clicked.connect(self.sig_load_current_frame.emit)
 
+        self._btn_rt_dir.clicked.connect(self.sig_select_realtime_dir.emit)
+        self._btn_rt_start.clicked.connect(self.sig_start_realtime.emit)
+        self._btn_rt_stop.clicked.connect(self.sig_stop_realtime.emit)
+        self._btn_rt_an_start.clicked.connect(self.sig_start_realtime_analysis.emit)
+        self._btn_rt_an_stop.clicked.connect(self.sig_stop_realtime_analysis.emit)
+
         self._btn_detect.clicked.connect(self.sig_run_detect.emit)
         self._btn_segment.clicked.connect(self.sig_run_segment.emit)
         self._btn_fusion.clicked.connect(self.sig_show_fusion.emit)
@@ -220,6 +285,8 @@ class ControlPanel(QWidget):
         self._btn_clear.clicked.connect(self.sig_clear_results.emit)
 
         self._busy_widgets = (
+            self._radio_offline,
+            self._radio_realtime,
             self._radio_single,
             self._radio_nusc,
             self._btn_select_file,
@@ -232,11 +299,23 @@ class ControlPanel(QWidget):
             self._btn_prev,
             self._btn_next,
             self._btn_load_frame,
+            self._btn_rt_dir,
+            self._btn_rt_start,
+            self._btn_rt_stop,
+            self._btn_rt_an_start,
+            self._btn_rt_an_stop,
             self._btn_detect,
             self._btn_segment,
             self._btn_fusion,
             self._btn_full,
         )
+
+        self.apply_runtime_module_lock(self.ui_runtime_mode())
+
+    def _on_runtime_button_clicked(self, _btn) -> None:
+        if self._block_runtime_emit:
+            return
+        self.sig_runtime_mode_changed.emit(self.ui_runtime_mode())
 
     def _on_source_button_clicked(self, _btn) -> None:
         if self._block_source_emit:
@@ -245,6 +324,19 @@ class ControlPanel(QWidget):
             self.sig_data_source_changed.emit("nuscenes")
         else:
             self.sig_data_source_changed.emit("single_file")
+
+    def ui_runtime_mode(self) -> str:
+        return "realtime" if self._radio_realtime.isChecked() else "offline"
+
+    def sync_runtime_mode_radio(self, mode: str) -> None:
+        self._block_runtime_emit = True
+        try:
+            if mode == "realtime":
+                self._radio_realtime.setChecked(True)
+            else:
+                self._radio_offline.setChecked(True)
+        finally:
+            self._block_runtime_emit = False
 
     def ui_data_source(self) -> str:
         return "nuscenes" if self._radio_nusc.isChecked() else "single_file"
@@ -261,8 +353,20 @@ class ControlPanel(QWidget):
         finally:
             self._block_source_emit = False
 
+    def apply_runtime_module_lock(self, runtime_mode: str) -> None:
+        offline_on = runtime_mode == "offline"
+        self._radio_single.setEnabled(offline_on)
+        self._radio_nusc.setEnabled(offline_on)
+        self._nusc_group.setEnabled(offline_on and self.ui_data_source() == "nuscenes")
+        self._file_group.setEnabled(offline_on and self.ui_data_source() == "single_file")
+        self._realtime_group.setEnabled(not offline_on)
+
     def apply_source_module_lock(self, ui_source: str) -> None:
-        """仅启用当前数据源对应分组（单选框始终可用）。"""
+        """仅启用当前离线数据源对应分组（离线模式内生效）。"""
+        if self.ui_runtime_mode() != "offline":
+            self._nusc_group.setEnabled(False)
+            self._file_group.setEnabled(False)
+            return
         nusc_on = ui_source == "nuscenes"
         single_on = ui_source == "single_file"
         self._nusc_group.setEnabled(nusc_on)
@@ -290,6 +394,24 @@ class ControlPanel(QWidget):
             self._path_nusc.setText(str(path))
             if self._nusc_group.isEnabled():
                 self._btn_nusc_connect.setEnabled(True)
+
+    def set_realtime_stream_dir(self, path: Optional[Path]) -> None:
+        if path is None:
+            self._path_rt_dir.clear()
+            self._path_rt_dir.setPlaceholderText("未选择（Mock Camera 目录）")
+        else:
+            self._path_rt_dir.setText(str(path))
+
+    def set_realtime_stats(self, fps: float, points: int, source: str) -> None:
+        self._lbl_rt_src.setText(f"当前数据源：{source}")
+        self._lbl_rt_fps.setText(f"当前 FPS：{float(fps):.1f}")
+        self._lbl_rt_pts.setText(f"当前帧点数：{int(points):,}")
+
+    def set_realtime_controls(self, *, running: bool, analyzing: bool) -> None:
+        self._btn_rt_start.setEnabled(not running)
+        self._btn_rt_stop.setEnabled(running)
+        self._btn_rt_an_start.setEnabled(running and (not analyzing))
+        self._btn_rt_an_stop.setEnabled(running and analyzing)
 
     def set_nusc_meta_text(self, text: str) -> None:
         self._label_nusc_meta.setText(str(text))
@@ -344,6 +466,13 @@ class ControlPanel(QWidget):
         defense_strict_pipeline=True：检测/分割/融合/一键分析均要求已载入非空点云；
         一键分析不再在未加载点云时通过「自动加载」启用（流程约束更严格）。
         """
+        if self.ui_runtime_mode() != "offline":
+            self._btn_detect.setEnabled(False)
+            self._btn_segment.setEnabled(False)
+            self._btn_fusion.setEnabled(False)
+            self._btn_full.setEnabled(False)
+            return
+
         can = bool(has_nonempty_pcd)
         self._btn_detect.setEnabled(can)
         self._btn_segment.setEnabled(can)

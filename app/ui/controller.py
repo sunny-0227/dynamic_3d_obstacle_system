@@ -18,9 +18,11 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Optional
 
 WorkflowMode = Literal["none", "single_file", "nuscenes"]
+RuntimeMode = Literal["offline", "realtime"]
 
 import numpy as np
 import open3d as o3d
+import time
 from PyQt5.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal
 
 from app.core.detector.openpcdet_detector import OpenPCDetDetector
@@ -34,6 +36,8 @@ from app.io.pointcloud_loader import (
     load_points_xyz_numpy,
     numpy_xyz_to_pointcloud,
 )
+from app.realtime.mock_camera import MockCamera
+from app.realtime.realtime_pipeline import RealtimePipeline
 from app.utils.logger import get_logger
 
 logger = get_logger("ui.controller")
@@ -61,10 +65,51 @@ class _TaskThread(QThread):
             self.sig_error.emit("任务失败", str(e))
 
 
+
+
+class _RealtimeThread(QThread):
+    """实时循环线程：读取点云帧，可选执行实时分析。"""
+
+    sig_result = pyqtSignal(object, float)  # RealtimeResult, fps
+    sig_error = pyqtSignal(str, str)
+
+    def __init__(self, rt_pipeline: RealtimePipeline, analyze: bool, target_fps: float):
+        super().__init__()
+        self._rt = rt_pipeline
+        self._analyze = bool(analyze)
+        self._running = True
+        self._dt = 1.0 / max(float(target_fps), 1.0)
+
+    def request_stop(self) -> None:
+        self._running = False
+
+    def run(self) -> None:
+        prev_t = time.perf_counter()
+        while self._running:
+            t0 = time.perf_counter()
+            try:
+                if self._analyze:
+                    res = self._rt.read_and_analyze()
+                else:
+                    res = self._rt.read_raw()
+                now = time.perf_counter()
+                fps = 1.0 / max(now - prev_t, 1e-6)
+                prev_t = now
+                self.sig_result.emit(res, float(fps))
+            except Exception as e:
+                self.sig_error.emit("实时模式失败", str(e))
+                break
+            elapsed = time.perf_counter() - t0
+            sleep_s = self._dt - elapsed
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+
+
 @dataclass
 class AppState:
-    """workflow：界面主流程，用于区分单文件与 nuScenes，避免混用入口。"""
+    """workflow：离线流程；runtime_mode：离线/实时模式切换。"""
 
+    runtime_mode: RuntimeMode = "offline"
     workflow: WorkflowMode = "none"
     current_file: Optional[Path] = None
     loaded_pcd: Optional[o3d.geometry.PointCloud] = None
@@ -75,6 +120,13 @@ class AppState:
     last_det = None
     last_seg = None
     last_scene = None
+
+    realtime_stream_dir: Optional[Path] = None
+    realtime_running: bool = False
+    realtime_analyzing: bool = False
+    realtime_fps: float = 0.0
+    realtime_points: int = 0
+    realtime_source: str = "Mock"
 
 
 class AppController(QObject):
@@ -98,6 +150,8 @@ class AppController(QObject):
 
         # 线程
         self._thread: Optional[QThread] = None
+        self._rt_thread: Optional[_RealtimeThread] = None
+        self._rt_pipeline: Optional[RealtimePipeline] = None
 
     # -----------------------------
     # 内部工具
@@ -200,6 +254,17 @@ class AppController(QObject):
         # 先解除 busy，再根据最新状态刷新按钮（避免 restore 覆盖 on_done 里启用的控件）
         self.sig_busy.emit(False)
         self._emit_state()
+
+
+    def _stop_realtime_thread(self) -> None:
+        if self._rt_thread is None:
+            return
+        t = self._rt_thread
+        self._rt_thread = None
+        t.request_stop()
+        if t.isRunning():
+            t.wait(3000)
+        t.deleteLater()
 
     def _ensure_pipelines(self) -> None:
         if self._detector_pipeline is None:
@@ -587,6 +652,125 @@ class AppController(QObject):
             self.sig_request_render.emit("fusion")
 
         self._run_in_thread(job, done)
+
+    # -----------------------------
+    # 对外动作：实时模式（Mock Camera）
+    # -----------------------------
+    def set_runtime_mode(self, mode: RuntimeMode) -> None:
+        self.state.runtime_mode = "realtime" if mode == "realtime" else "offline"
+        self._emit_state()
+
+    def set_realtime_stream_dir(self, path: Optional[Path]) -> None:
+        self.state.realtime_stream_dir = path
+        self._emit_state()
+
+    def start_realtime_mode(self) -> None:
+        if self.state.realtime_running:
+            return
+        # 离线任务正在运行时不允许启动实时模式，避免状态竞争
+        if self._thread is not None:
+            self.sig_error.emit("提示", "当前有离线任务正在运行，请等待任务完成后再启动实时模式。")
+            return
+        stream_dir = self.state.realtime_stream_dir or (self._project_root / "data")
+        # 目录不存在时给出明确中文提示
+        if not stream_dir.is_dir():
+            self.sig_error.emit(
+                "实时模式目录不存在",
+                f"请先选择包含 .bin 或 .pcd 文件的目录。\n当前路径：{stream_dir}",
+            )
+            return
+        cam = MockCamera(stream_dir)
+        self._ensure_pipelines()
+        self._rt_pipeline = RealtimePipeline(cam, self._full_pipeline)
+        try:
+            self._rt_pipeline.start()
+        except Exception as e:
+            self.sig_error.emit("启动实时模式失败", str(e))
+            return
+
+        self.state.runtime_mode = "realtime"
+        self.state.realtime_running = True
+        self.state.realtime_analyzing = False
+        self.state.realtime_source = self._rt_pipeline.source_name
+        self.sig_status.emit("实时模式已启动")
+        self.sig_log.emit(f"[实时] 已启动实时模式 | 数据源={self.state.realtime_source} | 目录={stream_dir.as_posix()}")
+
+        self._rt_thread = _RealtimeThread(self._rt_pipeline, analyze=False, target_fps=5.0)
+        self._rt_thread.sig_result.connect(self._on_realtime_result, Qt.QueuedConnection)
+        self._rt_thread.sig_error.connect(self._on_realtime_error, Qt.QueuedConnection)
+        self._rt_thread.start()
+        self._emit_state()
+
+    def stop_realtime_mode(self) -> None:
+        self._stop_realtime_thread()
+        if self._rt_pipeline is not None:
+            try:
+                self._rt_pipeline.stop()
+            except Exception:
+                pass
+            self._rt_pipeline = None
+        self.state.realtime_running = False
+        self.state.realtime_analyzing = False
+        self.state.realtime_fps = 0.0
+        self.sig_status.emit("就绪")
+        self.sig_log.emit("[实时] 已停止实时模式")
+        self._emit_state()
+
+    def start_realtime_analysis(self) -> None:
+        if not self.state.realtime_running:
+            self.sig_error.emit("提示", "请先启动实时模式")
+            return
+        if self.state.realtime_analyzing:
+            return
+        self._stop_realtime_thread()
+        self.state.realtime_analyzing = True
+        self.sig_status.emit("实时分析中…")
+        self.sig_log.emit("[实时] 已开始实时分析")
+        self._rt_thread = _RealtimeThread(self._rt_pipeline, analyze=True, target_fps=3.0)
+        self._rt_thread.sig_result.connect(self._on_realtime_result, Qt.QueuedConnection)
+        self._rt_thread.sig_error.connect(self._on_realtime_error, Qt.QueuedConnection)
+        self._rt_thread.start()
+        self._emit_state()
+
+    def stop_realtime_analysis(self) -> None:
+        if not self.state.realtime_running:
+            return
+        self._stop_realtime_thread()
+        self.state.realtime_analyzing = False
+        # 若 pipeline 已被 stop_realtime_mode 清空（极端并发情况），直接返回
+        if self._rt_pipeline is None:
+            self._emit_state()
+            return
+        self.sig_status.emit("实时模式已启动")
+        self.sig_log.emit("[实时] 已停止实时分析")
+        self._rt_thread = _RealtimeThread(self._rt_pipeline, analyze=False, target_fps=5.0)
+        self._rt_thread.sig_result.connect(self._on_realtime_result, Qt.QueuedConnection)
+        self._rt_thread.sig_error.connect(self._on_realtime_error, Qt.QueuedConnection)
+        self._rt_thread.start()
+        self._emit_state()
+
+    def _on_realtime_result(self, rt_res, fps: float) -> None:
+        frame = rt_res.frame
+        xyz = np.asarray(frame.points_xyz, dtype=np.float32)
+        self.state.realtime_fps = float(fps)
+        self.state.realtime_points = int(xyz.shape[0])
+        self.state.current_file = frame.source_path
+        self.state.loaded_pcd = numpy_xyz_to_pointcloud(xyz)
+
+        if rt_res.scene is not None:
+            # 只更新 last_scene，不拆散 last_det/last_seg；
+            # 离线"融合显示"走 last_scene 分支，不会因类型不匹配而出错
+            self.state.last_scene = rt_res.scene
+
+        self._emit_state()
+
+    def _on_realtime_error(self, title: str, msg: str) -> None:
+        self.sig_error.emit(title, msg)
+        self.stop_realtime_mode()
+        # 线程崩溃后自动切回离线模式，避免用户被"困"在实时模式界面
+        self.state.runtime_mode = "offline"
+        self.sig_log.emit("[实时] 模式已自动切回离线，请检查错误原因后重试")
+        self._emit_state()
 
     def clear_results(self) -> None:
         self.state.last_det = None

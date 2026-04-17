@@ -24,6 +24,11 @@ GUI 提供“执行分割”按钮调用统一分割 pipeline。
   - app.ui.controller：控制器 + 后台线程；workflow 与 nuScenes 导航默认逻辑
   - app.ui.widgets.*：左侧控制 / 顶栏 / 摘要卡片 / 分区状态栏 / 系统日志
   - app.ui.main_window：左右分栏 + 顶栏课题主副标题；严格按钮与数据源单选
+
+里程碑7：实时模式框架（Mock Camera）：
+  - app.realtime.camera_interface：实时相机抽象接口
+  - app.realtime.mock_camera：目录循环读点云，模拟连续点云流
+  - app.realtime.realtime_pipeline：实时读取/实时分析统一入口（后续可替换 RealSense）
 """
 
 import sys

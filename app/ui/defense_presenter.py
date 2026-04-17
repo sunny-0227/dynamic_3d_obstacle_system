@@ -15,14 +15,16 @@ from app.ui.widgets.defense_status_bar import DefenseStatusBar
 
 
 def mode_header_text(panel: ControlPanel, state: AppState, nusc_connected: bool) -> str:
+    if state.runtime_mode == "realtime":
+        return "工作模式：实时模式（点云流）"
     if state.workflow == "nuscenes" and nusc_connected:
-        return "工作模式：nuScenes mini 数据集"
+        return "工作模式：离线 / nuScenes mini 数据集"
     if state.workflow == "single_file":
-        return "工作模式：单文件点云"
+        return "工作模式：离线 / 单文件点云"
     src = panel.ui_data_source()
     if src == "nuscenes":
-        return "工作模式：nuScenes（尚未连接数据集）"
-    return "工作模式：单文件点云（尚未选择文件）"
+        return "工作模式：离线 / nuScenes（尚未连接数据集）"
+    return "工作模式：离线 / 单文件点云（尚未选择文件）"
 
 
 def build_summary_text(
@@ -32,9 +34,12 @@ def build_summary_text(
     nusc_connected: bool,
 ) -> str:
     lines: list[str] = []
-    lines.append(
-        f"界面数据源：{'nuScenes mini' if panel.ui_data_source() == 'nuscenes' else '单文件点云'}"
-    )
+    if state.runtime_mode == "realtime":
+        lines.append("界面数据源：实时模式")
+    else:
+        lines.append(
+            f"界面数据源：{'nuScenes mini' if panel.ui_data_source() == 'nuscenes' else '单文件点云'}"
+        )
     wf_line = f"控制器工作流：{state.workflow}"
     if state.workflow == "none":
         wf_line += "（尚未选单文件或连接数据集）"
@@ -77,6 +82,12 @@ def build_summary_text(
         lines.append(f"点云状态：已载入，{len(state.loaded_pcd.points):,} 点")
     else:
         lines.append("点云状态：未载入或为空")
+
+    if state.runtime_mode == "realtime":
+        lines.append(f"实时数据源：{state.realtime_source}")
+        lines.append(f"实时 FPS：{state.realtime_fps:.1f}")
+        lines.append(f"实时帧点数：{state.realtime_points:,}")
+        lines.append(f"实时分析：{'进行中' if state.realtime_analyzing else '未开始'}")
 
     return "\n".join(lines)
 

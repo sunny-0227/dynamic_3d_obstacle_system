@@ -38,7 +38,11 @@ from app.ui.defense_dialogs import (
     warn_empty_pcd_cannot_preview,
     warn_need_nonempty_pcd_for_fusion,
 )
-from app.ui.defense_file_dialogs import pick_nuscenes_root_directory, pick_pointcloud_file
+from app.ui.defense_file_dialogs import (
+    pick_nuscenes_root_directory,
+    pick_pointcloud_file,
+    pick_realtime_stream_directory,
+)
 from app.ui.defense_panel_sync import (
     compute_action_button_flags,
     refresh_nusc_meta_line,
@@ -139,6 +143,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(DEFENSE_MAINWINDOW_STYLESHEET)
 
     def _wire(self) -> None:
+        self._panel.sig_runtime_mode_changed.connect(self._on_runtime_mode_changed)
         self._panel.sig_data_source_changed.connect(self._on_panel_data_source)
 
         self._panel.sig_select_file.connect(self._on_pick_file)
@@ -153,6 +158,11 @@ class MainWindow(QMainWindow):
         self._panel.sig_load_current_frame.connect(
             lambda: self._controller.load_nusc_frame(self._panel.frame_index())
         )
+        self._panel.sig_select_realtime_dir.connect(self._on_pick_realtime_dir)
+        self._panel.sig_start_realtime.connect(self._controller.start_realtime_mode)
+        self._panel.sig_stop_realtime.connect(self._controller.stop_realtime_mode)
+        self._panel.sig_start_realtime_analysis.connect(self._controller.start_realtime_analysis)
+        self._panel.sig_stop_realtime_analysis.connect(self._controller.stop_realtime_analysis)
 
         self._panel.sig_run_detect.connect(self._controller.run_detect)
         self._panel.sig_run_segment.connect(self._controller.run_segment)
@@ -169,6 +179,13 @@ class MainWindow(QMainWindow):
         self._controller.sig_busy.connect(self._panel.set_busy)
         self._controller.sig_request_render.connect(self._on_render_request)
 
+    def _on_runtime_mode_changed(self, mode: str) -> None:
+        if mode == "offline" and self._controller.state.realtime_running:
+            self._controller.stop_realtime_mode()
+        self._controller.set_runtime_mode("realtime" if mode == "realtime" else "offline")
+        self._panel.apply_runtime_module_lock(mode)
+        self._on_state(self._controller.state)
+
     def _on_controller_status(self, message: str) -> None:
         msg = str(message)
         self._header.set_status_line(f"系统状态：{msg}")
@@ -177,6 +194,8 @@ class MainWindow(QMainWindow):
     def _on_panel_data_source(self, src: str) -> None:
         """切换数据源单选：必要时确认并清理另一侧状态。"""
         st = self._controller.state
+        if st.runtime_mode != "offline":
+            return
         if src == "nuscenes":
             if st.workflow == "single_file" and st.current_file is not None:
                 if not ask_switch_data_source_to_nuscenes_clears_single(self):
@@ -194,6 +213,14 @@ class MainWindow(QMainWindow):
 
         self._panel.apply_source_module_lock(src)
         self._on_state(self._controller.state)
+
+    def _on_pick_realtime_dir(self) -> None:
+        root = pick_realtime_stream_directory(self, self._project_root)
+        if root is None:
+            self._log.append("已取消选择实时流目录")
+            return
+        self._panel.set_realtime_stream_dir(root)
+        self._controller.set_realtime_stream_dir(root)
 
     def _guard_load_single_file(self) -> None:
         if self._panel.ui_data_source() != "single_file":
@@ -320,7 +347,19 @@ class MainWindow(QMainWindow):
         loader = state.nusc_loader
         nusc_connected = loader is not None and loader.is_connected
 
+        self._panel.sync_runtime_mode_radio(state.runtime_mode)
+        self._panel.apply_runtime_module_lock(state.runtime_mode)
         sync_control_panel_to_state(self._panel, state)
+        self._panel.set_realtime_stream_dir(state.realtime_stream_dir)
+        self._panel.set_realtime_controls(
+            running=bool(state.realtime_running),
+            analyzing=bool(state.realtime_analyzing),
+        )
+        self._panel.set_realtime_stats(
+            fps=float(state.realtime_fps),
+            points=int(state.realtime_points),
+            source=str(state.realtime_source),
+        )
 
         has_nonempty, has_results, allow_autoload = compute_action_button_flags(state)
         self._panel.set_action_buttons_state(
