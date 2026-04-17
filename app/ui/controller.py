@@ -37,6 +37,7 @@ from app.io.pointcloud_loader import (
     numpy_xyz_to_pointcloud,
 )
 from app.realtime.mock_camera import MockCamera
+from app.realtime.realsense_camera import RealSenseCamera
 from app.realtime.realtime_pipeline import RealtimePipeline
 from app.utils.logger import get_logger
 
@@ -664,6 +665,50 @@ class AppController(QObject):
         self.state.realtime_stream_dir = path
         self._emit_state()
 
+    def _build_camera(self):
+        """
+        根据配置构建相机实例。
+
+        配置项（config.realtime.camera_type）：
+          "mock"       — MockCamera（默认，不需要硬件）
+          "realsense"  — RealSenseCamera（需要 pyrealsense2 和硬件）
+        """
+        rt_cfg = self._config.get("realtime", {})
+        camera_type = str(rt_cfg.get("camera_type", "mock")).lower().strip()
+
+        if camera_type == "realsense":
+            cam = RealSenseCamera(
+                width=int(rt_cfg.get("width", 640)),
+                height=int(rt_cfg.get("height", 480)),
+                fps=int(rt_cfg.get("fps", 30)),
+                serial_number=str(rt_cfg.get("serial_number", "")),
+                align_to_color=bool(rt_cfg.get("align_to_color", False)),
+                min_depth_m=float(rt_cfg.get("min_depth_m", 0.1)),
+                max_depth_m=float(rt_cfg.get("max_depth_m", 10.0)),
+                timeout_ms=int(rt_cfg.get("timeout_ms", 2000)),
+            )
+            self.sig_log.emit(
+                f"[实时] 相机类型：RealSense | "
+                f"{rt_cfg.get('width', 640)}x{rt_cfg.get('height', 480)} "
+                f"@ {rt_cfg.get('fps', 30)}fps"
+            )
+            return cam
+
+        # 默认 Mock Camera
+        stream_dir = self.state.realtime_stream_dir or (self._project_root / "data")
+        if not stream_dir.is_dir():
+            raise FileNotFoundError(
+                f"Mock Camera 目录不存在，请先选择包含 .bin 或 .pcd 文件的目录。\n"
+                f"当前路径：{stream_dir}"
+            )
+        cam = MockCamera(
+            stream_dir,
+            loop=bool(rt_cfg.get("mock_loop", True)),
+            target_fps=float(rt_cfg.get("mock_fps", 5.0)),
+        )
+        self.sig_log.emit(f"[实时] 相机类型：Mock Camera | 目录：{stream_dir.as_posix()}")
+        return cam
+
     def start_realtime_mode(self) -> None:
         if self.state.realtime_running:
             return
@@ -671,31 +716,36 @@ class AppController(QObject):
         if self._thread is not None:
             self.sig_error.emit("提示", "当前有离线任务正在运行，请等待任务完成后再启动实时模式。")
             return
-        stream_dir = self.state.realtime_stream_dir or (self._project_root / "data")
-        # 目录不存在时给出明确中文提示
-        if not stream_dir.is_dir():
-            self.sig_error.emit(
-                "实时模式目录不存在",
-                f"请先选择包含 .bin 或 .pcd 文件的目录。\n当前路径：{stream_dir}",
-            )
+
+        # 构建相机（Mock 或 RealSense，由配置决定）
+        try:
+            cam = self._build_camera()
+        except Exception as e:
+            self.sig_error.emit("实时模式启动失败", str(e))
             return
-        cam = MockCamera(stream_dir)
+
         self._ensure_pipelines()
         self._rt_pipeline = RealtimePipeline(cam, self._full_pipeline)
         try:
             self._rt_pipeline.start()
         except Exception as e:
             self.sig_error.emit("启动实时模式失败", str(e))
+            self._rt_pipeline = None
             return
+
+        rt_cfg = self._config.get("realtime", {})
+        raw_fps = float(rt_cfg.get("raw_fps", 5.0))
 
         self.state.runtime_mode = "realtime"
         self.state.realtime_running = True
         self.state.realtime_analyzing = False
         self.state.realtime_source = self._rt_pipeline.source_name
         self.sig_status.emit("实时模式已启动")
-        self.sig_log.emit(f"[实时] 已启动实时模式 | 数据源={self.state.realtime_source} | 目录={stream_dir.as_posix()}")
+        self.sig_log.emit(
+            f"[实时] 已启动实时模式 | 数据源={self.state.realtime_source} | 预览帧率={raw_fps:.1f}fps"
+        )
 
-        self._rt_thread = _RealtimeThread(self._rt_pipeline, analyze=False, target_fps=5.0)
+        self._rt_thread = _RealtimeThread(self._rt_pipeline, analyze=False, target_fps=raw_fps)
         self._rt_thread.sig_result.connect(self._on_realtime_result, Qt.QueuedConnection)
         self._rt_thread.sig_error.connect(self._on_realtime_error, Qt.QueuedConnection)
         self._rt_thread.start()
@@ -726,7 +776,8 @@ class AppController(QObject):
         self.state.realtime_analyzing = True
         self.sig_status.emit("实时分析中…")
         self.sig_log.emit("[实时] 已开始实时分析")
-        self._rt_thread = _RealtimeThread(self._rt_pipeline, analyze=True, target_fps=3.0)
+        analysis_fps = float(self._config.get("realtime", {}).get("analysis_fps", 3.0))
+        self._rt_thread = _RealtimeThread(self._rt_pipeline, analyze=True, target_fps=analysis_fps)
         self._rt_thread.sig_result.connect(self._on_realtime_result, Qt.QueuedConnection)
         self._rt_thread.sig_error.connect(self._on_realtime_error, Qt.QueuedConnection)
         self._rt_thread.start()
@@ -743,7 +794,8 @@ class AppController(QObject):
             return
         self.sig_status.emit("实时模式已启动")
         self.sig_log.emit("[实时] 已停止实时分析")
-        self._rt_thread = _RealtimeThread(self._rt_pipeline, analyze=False, target_fps=5.0)
+        raw_fps = float(self._config.get("realtime", {}).get("raw_fps", 5.0))
+        self._rt_thread = _RealtimeThread(self._rt_pipeline, analyze=False, target_fps=raw_fps)
         self._rt_thread.sig_result.connect(self._on_realtime_result, Qt.QueuedConnection)
         self._rt_thread.sig_error.connect(self._on_realtime_error, Qt.QueuedConnection)
         self._rt_thread.start()

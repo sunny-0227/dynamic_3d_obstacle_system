@@ -96,3 +96,38 @@ segmentor:
     config_file: ""          # MMDet3D 配置文件（为空则走占位实现）
     checkpoint_file: ""      # MMDet3D 权重文件（为空则走占位实现）
     device: "cpu"            # "cpu" 或 "cuda"
+
+# 实时模式配置（里程碑 7）
+realtime:
+  # 相机类型：
+  #   "mock"        — Mock Camera，从本地目录循环读取 .bin/.pcd，无需硬件（默认）
+  #   "realsense"   — Intel RealSense 深度相机，需安装 pyrealsense2 并连接硬件
+  camera_type: "mock"
+
+  # ---------- Mock Camera 专属 ----------
+  # mock_fps：Mock Camera 目标帧率（节拍由 _RealtimeThread 的 sleep 控制）
+  mock_fps: 5.0
+  # mock_loop：是否循环读取目录（true=循环；false=读完停止）
+  mock_loop: true
+
+  # ---------- RealSense Camera 专属 ----------
+  # 深度流分辨率（常用：424x240 / 480x270 / 640x480 / 848x480 / 1280x720）
+  width: 640
+  height: 480
+  # 深度流帧率（D435 支持：6/15/30/60/90，建议演示用 15 或 30）
+  fps: 30
+  # 设备序列号：多台相机时指定连接哪台；留空则连接第一台已识别设备
+  serial_number: ""
+  # 是否对齐深度帧到彩色帧坐标系（开启时需同时开启彩色流，会增加 CPU/带宽开销）
+  align_to_color: false
+  # 有效深度范围（米）：过滤过近噪点和超出量程的远处点
+  min_depth_m: 0.1
+  max_depth_m: 10.0
+  # wait_for_frames 超时（毫秒）；演示时建议 1000-2000，降低断开时的等待卡顿
+  timeout_ms: 2000
+
+  # ---------- 帧率控制（对 Mock 和 RealSense 均生效）----------
+  # raw_fps：预览模式（仅读帧不分析）的目标帧率
+  raw_fps: 5.0
+  # analysis_fps：实时分析模式的目标帧率（算法耗时较长时实际 fps 由算法决定）
+  analysis_fps: 3.0
