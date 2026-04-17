@@ -77,7 +77,9 @@ class MainWindow(QMainWindow):
         self._project_root = Path(__file__).resolve().parent.parent.parent
 
         self._controller = AppController(config=self._config)
-        self._renderer: Optional[SceneRenderer] = None
+        self._renderer: Optional[SceneRenderer] = None          # 离线阻塞式渲染器
+        self._rt_renderer: Optional[SceneRenderer] = None       # 实时非阻塞渲染器
+        self._rt_tick_timer: Optional[QTimer] = None            # 驱动 Open3D 事件循环的定时器
 
         self._build_ui()
         self._apply_style()
@@ -178,10 +180,14 @@ class MainWindow(QMainWindow):
         self._controller.sig_state.connect(self._on_state)
         self._controller.sig_busy.connect(self._panel.set_busy)
         self._controller.sig_request_render.connect(self._on_render_request)
+        self._controller.sig_realtime_frame.connect(self._on_realtime_frame)
 
     def _on_runtime_mode_changed(self, mode: str) -> None:
         if mode == "offline" and self._controller.state.realtime_running:
             self._controller.stop_realtime_mode()
+        if mode == "offline":
+            # 切回离线模式时关闭实时渲染窗口
+            self._close_realtime_renderer()
         self._controller.set_runtime_mode("realtime" if mode == "realtime" else "offline")
         self._panel.apply_runtime_module_lock(mode)
         self._on_state(self._controller.state)
@@ -436,3 +442,71 @@ class MainWindow(QMainWindow):
             self._renderer.render(scene)
         finally:
             self._panel.set_busy(False)
+
+    # ------------------------------------------------------------------
+    # 实时 Open3D 窗口管理
+    # ------------------------------------------------------------------
+
+    def _ensure_realtime_renderer(self) -> SceneRenderer:
+        """懒创建实时渲染器并打开 Open3D 窗口（仅第一次调用时创建）。"""
+        if self._rt_renderer is None or not self._rt_renderer.is_open:
+            vis_cfg = self._config.get("visualization", {})
+            self._rt_renderer = SceneRenderer(
+                RenderOptions(
+                    window_title="实时三维感知（点云 + 分割 + 检测框）",
+                    width=int(vis_cfg.get("window_width", 1280)),
+                    height=int(vis_cfg.get("window_height", 720)),
+                    background_color=vis_cfg.get("background_color", [0.05, 0.05, 0.05]),
+                    point_size=float(vis_cfg.get("point_size", 2.0)),
+                    show_coordinate_frame=True,
+                )
+            )
+            self._rt_renderer.open_realtime_window()
+
+            # 启动定时器，持续驱动 Open3D 事件循环（33ms ≈ 30fps 的界面响应上限）
+            if self._rt_tick_timer is None:
+                self._rt_tick_timer = QTimer(self)
+                self._rt_tick_timer.timeout.connect(self._on_rt_tick)
+            self._rt_tick_timer.start(33)
+            self._log.append("[实时] Open3D 可视化窗口已打开")
+
+        return self._rt_renderer
+
+    def _on_realtime_frame(self, scene) -> None:
+        """
+        接收控制器发来的实时帧 FusedScene，刷新 Open3D 窗口。
+
+        由 controller.sig_realtime_frame 信号驱动，在 GUI 主线程中执行。
+        """
+        renderer = self._ensure_realtime_renderer()
+        still_open = renderer.update(scene)
+        if not still_open:
+            # 用户手动关闭了 Open3D 窗口，停止实时分析
+            self._log.append("[实时] Open3D 窗口已被关闭，停止实时分析")
+            self._controller.stop_realtime_analysis()
+            self._close_realtime_renderer()
+
+    def _on_rt_tick(self) -> None:
+        """
+        定时器回调：在没有新帧时驱动 Open3D 事件循环，保持窗口响应鼠标/键盘。
+
+        注意：update() 已包含 poll_events + update_renderer，
+        tick() 只在两帧之间补驱动，避免窗口假死。
+        """
+        if self._rt_renderer is None or not self._rt_renderer.is_open:
+            if self._rt_tick_timer is not None:
+                self._rt_tick_timer.stop()
+            return
+        still_open = self._rt_renderer.tick()
+        if not still_open:
+            self._log.append("[实时] Open3D 窗口已被关闭（tick 检测）")
+            self._controller.stop_realtime_analysis()
+            self._close_realtime_renderer()
+
+    def _close_realtime_renderer(self) -> None:
+        """关闭实时渲染窗口并停止定时器（幂等）。"""
+        if self._rt_tick_timer is not None:
+            self._rt_tick_timer.stop()
+        if self._rt_renderer is not None:
+            self._rt_renderer.close()
+            self._rt_renderer = None

@@ -137,6 +137,8 @@ class AppController(QObject):
     sig_state = pyqtSignal(object)  # AppState
     sig_busy = pyqtSignal(bool)
     sig_request_render = pyqtSignal(str)  # "raw" / "seg" / "fusion"
+    # 实时分析帧结果：携带 FusedScene，驱动实时 Open3D 窗口刷新
+    sig_realtime_frame = pyqtSignal(object)  # FusedScene
 
     def __init__(self, config: dict):
         super().__init__()
@@ -813,6 +815,8 @@ class AppController(QObject):
             # 只更新 last_scene，不拆散 last_det/last_seg；
             # 离线"融合显示"走 last_scene 分支，不会因类型不匹配而出错
             self.state.last_scene = rt_res.scene
+            # 通知 main_window 刷新实时 Open3D 窗口
+            self.sig_realtime_frame.emit(rt_res.scene)
 
         self._emit_state()
 
