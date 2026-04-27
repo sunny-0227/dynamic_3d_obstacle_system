@@ -80,33 +80,32 @@ detector:
   # enable_wsl: true 时优先通过 WSL2 调用 infer_to_json.py 执行真实检测；
   #             false 时直接使用 fallback 模拟检测（离线开发/无 WSL 环境时使用）
   openpcdet_wsl:
-    # 是否启用 WSL 推理（改为 true 并填写下方路径后生效）
-    enable_wsl: false
+    # 是否启用 WSL 推理
+    enable_wsl: true
 
     # infer_to_json.py 在 WSL 内的完整路径
-    # 示例：~/dynamic_3d_obstacle_system/infer_to_json.py
-    infer_script: "~/dynamic_3d_obstacle_system/infer_to_json.py"
+    # 注意：该脚本位于 Windows 项目根目录，通过 /mnt/d/... 访问
+    infer_script: "/mnt/d/sunny/dynamic_3d_obstacle_system/infer_to_json.py"
 
     # OpenPCDet 模型配置文件（WSL 内路径）
-    # 示例：~/OpenPCDet/tools/cfgs/kitti_models/pointpillar.yaml
+    # ⚠ 请确认你的 PointPillar yaml 实际路径，下方为常见默认位置
     cfg_file: "~/OpenPCDet/tools/cfgs/kitti_models/pointpillar.yaml"
 
     # 模型权重 checkpoint（WSL 内路径）
-    # 示例：~/checkpoints/pointpillar_7728.pth
-    ckpt_file: "~/checkpoints/pointpillar_7728.pth"
+    ckpt_file: "/mnt/d/sunny/openpcdet_models/pointpillar.pth"
 
     # WSL 中的 conda 环境名
-    conda_env: "openpcdet"
+    conda_env: "openpcdet_py310"
 
-    # 点云文件扩展名（与数据集一致）
+    # 点云文件扩展名
     ext: ".bin"
 
-    # WSL 子进程超时（秒）：模型首次加载较慢，建议 120~300
-    wsl_timeout_s: 120
+    # WSL 子进程超时（秒）：首次加载模型较慢，建议 180~300
+    wsl_timeout_s: 180
 
-    # JSON 临时文件输出目录（Windows 路径，留空则使用系统临时目录）
-    # 示例："C:/Users/me/AppData/Local/Temp/openpcdet"
-    tmp_dir: ""
+    # JSON 结果输出目录（Windows 路径，对应 WSL 的 /mnt/d/sunny/openpcdet_result）
+    # 脚本会把 JSON 写到这个目录，Windows 端再读取
+    tmp_dir: "D:/sunny/openpcdet_result"
 
 # 分割器配置（里程碑 4）
 segmentor:
