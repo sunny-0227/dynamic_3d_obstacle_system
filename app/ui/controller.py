@@ -26,6 +26,7 @@ import time
 from PyQt5.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal
 
 from app.core.detector.openpcdet_detector import OpenPCDetDetector
+from app.core.detector.openpcdet_json_detector import OpenPCDetJsonDetector
 from app.core.pipeline.detect_pipeline import DetectPipeline
 from app.core.pipeline.full_pipeline import FullPipeline
 from app.core.pipeline.segment_pipeline import SegmentPipeline
@@ -271,29 +272,78 @@ class AppController(QObject):
 
     def _ensure_pipelines(self) -> None:
         if self._detector_pipeline is None:
-            det_cfg = self._config.get("detector", {})
+            det_cfg   = self._config.get("detector", {})
             score_threshold = det_cfg.get("score_threshold", 0.1)
-            num_boxes_fake = det_cfg.get("num_boxes_fake", 3)
-            class_names = det_cfg.get("class_names", ["car", "pedestrian", "cyclist"])
-            openpcdet_cfg = det_cfg.get("openpcdet", {})
+            num_boxes_fake  = det_cfg.get("num_boxes_fake", 3)
+            class_names     = det_cfg.get("class_names", ["car", "pedestrian", "cyclist"])
+            wsl_cfg   = det_cfg.get("openpcdet_wsl", {})
 
-            def _resolve(p: str) -> Optional[Path]:
-                p = str(p or "").strip()
-                if not p:
-                    return None
-                pp = Path(p)
-                if not pp.is_absolute():
-                    pp = self._project_root / pp
-                return pp
+            # ── 优先：WSL2 subprocess 真实推理 ────────────────────────
+            # enable_wsl=true 且关键路径已填写时，使用 OpenPCDetJsonDetector；
+            # 否则静默降级为旧版 OpenPCDetDetector（内置 fake）。
+            enable_wsl    = bool(wsl_cfg.get("enable_wsl", False))
+            cfg_file_wsl  = str(wsl_cfg.get("cfg_file",      "") or "").strip()
+            ckpt_file_wsl = str(wsl_cfg.get("ckpt_file",     "") or "").strip()
+            infer_script  = str(wsl_cfg.get("infer_script",  "") or "").strip()
+            conda_env     = str(wsl_cfg.get("conda_env",     "openpcdet")).strip()
+            ext           = str(wsl_cfg.get("ext",           ".bin")).strip()
+            timeout_s     = int(wsl_cfg.get("wsl_timeout_s", 120))
+            tmp_dir_str   = str(wsl_cfg.get("tmp_dir",       "") or "").strip()
+            tmp_dir       = Path(tmp_dir_str) if tmp_dir_str else None
 
-            detector = OpenPCDetDetector(
-                model_cfg_path=_resolve(openpcdet_cfg.get("model_cfg", "")),
-                checkpoint_path=_resolve(openpcdet_cfg.get("checkpoint_path", "")),
-                device=openpcdet_cfg.get("device", "cpu"),
-                score_threshold=score_threshold,
-                num_boxes_fake=num_boxes_fake,
-                class_names=class_names,
-            )
+            # 判断 WSL 配置是否完整（三个路径均非空才真正启用）
+            wsl_paths_ok = bool(cfg_file_wsl and ckpt_file_wsl and infer_script)
+
+            if enable_wsl and wsl_paths_ok:
+                logger.info(
+                    "[Controller] 检测器：OpenPCDetJsonDetector（WSL 真实推理模式）"
+                )
+                detector = OpenPCDetJsonDetector(
+                    cfg_file      = cfg_file_wsl,
+                    ckpt_file     = ckpt_file_wsl,
+                    infer_script  = infer_script,
+                    conda_env     = conda_env,
+                    ext           = ext,
+                    score_threshold = score_threshold,
+                    class_names   = class_names,
+                    wsl_timeout_s = timeout_s,
+                    num_boxes_fake= num_boxes_fake,
+                    tmp_dir       = tmp_dir,
+                    enable_wsl    = True,
+                )
+            else:
+                # ── 降级：旧版 OpenPCDetDetector（内置 fake）─────────
+                if enable_wsl and not wsl_paths_ok:
+                    logger.warning(
+                        "[Controller] enable_wsl=true 但 cfg_file/ckpt_file/infer_script "
+                        "未全部配置，降级为模拟检测。"
+                        "请在 config/settings.yaml [detector.openpcdet_wsl] 中填写完整路径。"
+                    )
+                else:
+                    logger.info(
+                        "[Controller] 检测器：OpenPCDetDetector（模拟检测 / 占位模式）"
+                    )
+
+                openpcdet_cfg = det_cfg.get("openpcdet", {})
+
+                def _resolve(p: str) -> Optional[Path]:
+                    p = str(p or "").strip()
+                    if not p:
+                        return None
+                    pp = Path(p)
+                    if not pp.is_absolute():
+                        pp = self._project_root / pp
+                    return pp
+
+                detector = OpenPCDetDetector(
+                    model_cfg_path  = _resolve(openpcdet_cfg.get("model_cfg", "")),
+                    checkpoint_path = _resolve(openpcdet_cfg.get("checkpoint_path", "")),
+                    device          = openpcdet_cfg.get("device", "cpu"),
+                    score_threshold = score_threshold,
+                    num_boxes_fake  = num_boxes_fake,
+                    class_names     = class_names,
+                )
+
             self._detector_pipeline = DetectPipeline(detector=detector)
 
         if self._segment_pipeline is None:
