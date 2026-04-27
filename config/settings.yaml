@@ -89,7 +89,7 @@ detector:
 
     # OpenPCDet 模型配置文件（WSL 内路径）
     # ⚠ 请确认你的 PointPillar yaml 实际路径，下方为常见默认位置
-    cfg_file: "~/OpenPCDet/tools/cfgs/kitti_models/pointpillar.yaml"
+    cfg_file: "/home/sunny/OpenPCDet/tools/cfgs/kitti_models/pointpillar.yaml"
 
     # 模型权重 checkpoint（WSL 内路径）
     ckpt_file: "/mnt/d/sunny/openpcdet_models/pointpillar.pth"
