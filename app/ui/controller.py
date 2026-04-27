@@ -128,6 +128,7 @@ class AppState:
     realtime_analyzing: bool = False
     realtime_fps: float = 0.0
     realtime_points: int = 0
+    realtime_obstacles: int = 0    # 当前帧聚类检测到的障碍物数量
     realtime_source: str = "Mock"
 
 
@@ -860,6 +861,9 @@ class AppController(QObject):
         self.state.realtime_points = int(xyz.shape[0])
         self.state.current_file = frame.source_path
         self.state.loaded_pcd = numpy_xyz_to_pointcloud(xyz)
+        # 更新障碍物数量（来自 LightweightRealtimePipeline 的聚类结果）
+        clusters = getattr(rt_res, "clusters", None)
+        self.state.realtime_obstacles = len(clusters) if clusters is not None else 0
 
         if rt_res.scene is not None:
             # 只更新 last_scene，不拆散 last_det/last_seg；
