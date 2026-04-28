@@ -15,6 +15,8 @@ from typing import List, Union
 
 import numpy as np
 
+import time
+
 from app.core.detector.base_detector import BaseDetector, DetectionBox, PointsInput
 from app.core.postprocess.box_converter import BoxConverter
 from app.utils.logger import get_logger
@@ -36,12 +38,16 @@ class DetectPipeline:
         self.box_converter = box_converter if box_converter is not None else BoxConverter()
 
     def run(self, points_or_path: PointsInput) -> List[DetectionBox]:
-        """
-        执行检测并返回统一检测结果。
-        """
-        logger.info("开始执行检测 pipeline")
+        """执行检测并返回统一检测结果。"""
+        det_cls = type(self.detector).__name__
+        logger.info("[DetectPipeline] 开始检测 | 检测器=%s", det_cls)
+        t0 = time.perf_counter()
         detections = self.detector.detect(points_or_path)
         detections_std = self.box_converter.convert(detections)
-        logger.info("检测完成 | 检测框数: %d", len(detections_std))
+        elapsed = (time.perf_counter() - t0) * 1000
+        logger.info(
+            "[DetectPipeline] 检测完成 | 检测器=%s | 框数=%d | 耗时=%.0f ms",
+            det_cls, len(detections_std), elapsed,
+        )
         return detections_std
 

@@ -273,32 +273,39 @@ class AppController(QObject):
 
     def _ensure_pipelines(self) -> None:
         if self._detector_pipeline is None:
-            det_cfg   = self._config.get("detector", {})
+            det_cfg         = self._config.get("detector", {})
             score_threshold = det_cfg.get("score_threshold", 0.1)
             num_boxes_fake  = det_cfg.get("num_boxes_fake", 3)
             class_names     = det_cfg.get("class_names", ["car", "pedestrian", "cyclist"])
-            wsl_cfg   = det_cfg.get("openpcdet_wsl", {})
+            wsl_cfg         = det_cfg.get("openpcdet_wsl", {})
 
-            # ── 优先：WSL2 subprocess 真实推理 ────────────────────────
-            # enable_wsl=true 且关键路径已填写时，使用 OpenPCDetJsonDetector；
-            # 否则静默降级为旧版 OpenPCDetDetector（内置 fake）。
             enable_wsl    = bool(wsl_cfg.get("enable_wsl", False))
             cfg_file_wsl  = str(wsl_cfg.get("cfg_file",      "") or "").strip()
             ckpt_file_wsl = str(wsl_cfg.get("ckpt_file",     "") or "").strip()
             infer_script  = str(wsl_cfg.get("infer_script",  "") or "").strip()
             conda_env     = str(wsl_cfg.get("conda_env",     "openpcdet")).strip()
             ext           = str(wsl_cfg.get("ext",           ".bin")).strip()
-            timeout_s     = int(wsl_cfg.get("wsl_timeout_s", 120))
+            timeout_s     = int(wsl_cfg.get("wsl_timeout_s", 180))
             tmp_dir_str   = str(wsl_cfg.get("tmp_dir",       "") or "").strip()
             tmp_dir       = Path(tmp_dir_str) if tmp_dir_str else None
 
-            # 判断 WSL 配置是否完整（三个路径均非空才真正启用）
             wsl_paths_ok = bool(cfg_file_wsl and ckpt_file_wsl and infer_script)
 
             if enable_wsl and wsl_paths_ok:
-                logger.info(
-                    "[Controller] 检测器：OpenPCDetJsonDetector（WSL 真实推理模式）"
+                # ── WSL 真实推理：使用 OpenPCDetJsonDetector ────────
+                logger.info("[Controller] 检测器：OpenPCDetJsonDetector（WSL 真实推理模式）")
+                self.sig_log.emit(
+                    f"[检测器] 启用 OpenPCDet WSL 真实推理 | "
+                    f"conda_env={conda_env} | timeout={timeout_s}s"
                 )
+                self.sig_log.emit(f"[检测器] infer_script={infer_script}")
+                self.sig_log.emit(f"[检测器] cfg_file={cfg_file_wsl}")
+                self.sig_log.emit(f"[检测器] ckpt_file={ckpt_file_wsl}")
+                self.sig_log.emit(f"[检测器] tmp_dir={tmp_dir or '(系统临时目录)'}")
+
+                # 把 UI 日志信号包成回调传给检测器，实现检测内部日志实时显示在 UI
+                ui_log_cb = self.sig_log.emit
+
                 detector = OpenPCDetJsonDetector(
                     cfg_file      = cfg_file_wsl,
                     ckpt_file     = ckpt_file_wsl,
@@ -311,19 +318,21 @@ class AppController(QObject):
                     num_boxes_fake= num_boxes_fake,
                     tmp_dir       = tmp_dir,
                     enable_wsl    = True,
+                    log_callback  = ui_log_cb,
                 )
             else:
-                # ── 降级：旧版 OpenPCDetDetector（内置 fake）─────────
+                # ── 降级：旧版 OpenPCDetDetector（内置 fake）──────────
                 if enable_wsl and not wsl_paths_ok:
-                    logger.warning(
+                    warn_msg = (
                         "[Controller] enable_wsl=true 但 cfg_file/ckpt_file/infer_script "
                         "未全部配置，降级为模拟检测。"
-                        "请在 config/settings.yaml [detector.openpcdet_wsl] 中填写完整路径。"
+                        "请在配置页或 config/settings.yaml 填写完整路径。"
                     )
+                    logger.warning(warn_msg)
+                    self.sig_log.emit(f"⚠ {warn_msg}")
                 else:
-                    logger.info(
-                        "[Controller] 检测器：OpenPCDetDetector（模拟检测 / 占位模式）"
-                    )
+                    logger.info("[Controller] 检测器：OpenPCDetDetector（模拟检测 / 占位模式）")
+                    self.sig_log.emit("[检测器] 使用占位模拟检测（enable_wsl=false）")
 
                 openpcdet_cfg = det_cfg.get("openpcdet", {})
 
@@ -595,18 +604,42 @@ class AppController(QObject):
         if self.state.loaded_pcd is None or len(self.state.loaded_pcd.points) == 0:
             self.sig_error.emit("提示", "请先加载非空点云后再执行检测。")
             return
+
+        # 构建 pipeline（首次调用时初始化检测器，并输出配置信息到 UI 日志）
         self._ensure_pipelines()
+
         pts = np.asarray(self.state.loaded_pcd.points, dtype=np.float32)
+        n_pts = len(pts)
+
+        # 读取当前检测器类型，用于 UI 日志
+        det_is_wsl = isinstance(
+            getattr(self._detector_pipeline, "detector", None),
+            OpenPCDetJsonDetector,
+        )
+        det_name = "OpenPCDet（WSL 真实推理）" if det_is_wsl else "模拟检测（占位）"
+
         self.sig_status.emit("检测中…")
-        self.sig_log.emit("开始执行检测…")
+        self.sig_log.emit("─" * 40)
+        self.sig_log.emit(f"开始执行 OpenPCDet 检测 | 点云大小={n_pts:,} 点 | 检测器={det_name}")
+        if det_is_wsl:
+            wsl_cfg = self._config.get("detector", {}).get("openpcdet_wsl", {})
+            self.sig_log.emit(
+                f"  infer_to_json.py: {wsl_cfg.get('infer_script', '未配置')}"
+            )
+            self.sig_log.emit(
+                f"  JSON 输出目录: {wsl_cfg.get('tmp_dir', '(系统临时目录)')}"
+            )
 
         def job():
             return self._detector_pipeline.run(pts)
 
         def done(dets):
             self.state.last_det = dets
-            self.sig_log.emit(f"检测完成：检测框 {len(dets)} 个")
-            self.sig_status.emit("检测完成")
+            n = len(dets)
+            src = "OpenPCDet 真实检测" if det_is_wsl else "模拟检测"
+            self.sig_log.emit(f"检测完成 ✓ | 来源={src} | 检测框数={n} 个")
+            self.sig_log.emit("─" * 40)
+            self.sig_status.emit(f"检测完成（{n} 个目标框）")
             self._emit_state()
             self.sig_request_render.emit("fusion")
 
@@ -692,15 +725,26 @@ class AppController(QObject):
     def _run_full_pipeline(self) -> None:
         self._ensure_pipelines()
         pts = np.asarray(self.state.loaded_pcd.points, dtype=np.float32)
+        n_pts = len(pts)
+
+        det_is_wsl = isinstance(
+            getattr(self._detector_pipeline, "detector", None),
+            OpenPCDetJsonDetector,
+        )
+        det_name = "OpenPCDet（WSL 真实推理）" if det_is_wsl else "模拟检测（占位）"
+
         self.sig_status.emit("一键分析中…")
-        self.sig_log.emit("开始一键分析（分割+检测+融合）…")
+        self.sig_log.emit("─" * 40)
+        self.sig_log.emit(f"开始一键分析（检测+分割+融合）| 点云={n_pts:,} 点 | 检测器={det_name}")
 
         def job():
             return self._full_pipeline.run(pts)
 
         def done(scene):
             self.state.last_scene = scene
-            self.sig_log.emit("一键分析完成（已生成融合场景）")
+            src = "OpenPCDet 真实检测" if det_is_wsl else "模拟检测"
+            self.sig_log.emit(f"一键分析完成 ✓ | 检测来源={src}")
+            self.sig_log.emit("─" * 40)
             self.sig_status.emit("一键分析完成")
             self._emit_state()
             self.sig_request_render.emit("fusion")
