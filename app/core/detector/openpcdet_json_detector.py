@@ -147,6 +147,7 @@ class OpenPCDetJsonDetector(BaseDetector):
         infer_script: str,
         conda_env: str = "openpcdet",
         conda_base: str = "",          # 留空则按 _CONDA_SH_CANDIDATES 自动探测
+        openpcdet_tools_dir: str = "", # OpenPCDet/tools 目录（WSL路径），确保相对路径正确
         ext: str = ".bin",
         score_threshold: float = 0.1,
         class_names: Optional[List[str]] = None,
@@ -157,11 +158,12 @@ class OpenPCDetJsonDetector(BaseDetector):
         log_callback: Optional[LogCallback] = None,
     ) -> None:
         super().__init__()
-        self._cfg_file      = cfg_file
-        self._ckpt_file     = ckpt_file
-        self._infer_script  = infer_script
-        self._conda_env     = conda_env
-        self._conda_base    = conda_base.strip()   # 用户可手动指定 conda 根目录
+        self._cfg_file             = cfg_file
+        self._ckpt_file            = ckpt_file
+        self._infer_script         = infer_script
+        self._conda_env            = conda_env
+        self._conda_base           = conda_base.strip()
+        self._openpcdet_tools_dir  = openpcdet_tools_dir.strip()  # cd 目标目录
         self._ext           = ext if ext.startswith(".") else f".{ext}"
         self._score_thr     = float(score_threshold)
         self._class_names   = list(class_names or ["car", "pedestrian", "cyclist"])
@@ -326,14 +328,20 @@ class OpenPCDetJsonDetector(BaseDetector):
         wsl_bin  = _win_to_wsl(tmp_bin)
         wsl_json = _win_to_wsl(tmp_json)
 
-        # cd 到 infer_to_json.py 所在目录（即 OpenPCDet/tools）后再执行，
+        # cd 到 openpcdet_tools_dir（默认 ~/OpenPCDet/tools）后再执行，
         # 确保 OpenPCDet 内部的相对路径（cfgs/dataset_configs/...）能正确解析。
-        script_dir = self._infer_script.rsplit("/", 1)[0] if "/" in self._infer_script else "."
+        # 若未配置 tools_dir，则退而使用 infer_script 所在目录。
+        if self._openpcdet_tools_dir:
+            work_dir = self._openpcdet_tools_dir
+        elif "/" in self._infer_script:
+            work_dir = self._infer_script.rsplit("/", 1)[0]
+        else:
+            work_dir = "."
 
         cmd = (
             f"source {conda_sh} && "
             f"conda activate {self._conda_env} && "
-            f"cd {script_dir} && "
+            f"cd {work_dir} && "
             f"python {self._infer_script} "
             f"--cfg_file {self._cfg_file} "
             f"--ckpt {self._ckpt_file} "

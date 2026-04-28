@@ -279,15 +279,16 @@ class AppController(QObject):
             class_names     = det_cfg.get("class_names", ["car", "pedestrian", "cyclist"])
             wsl_cfg         = det_cfg.get("openpcdet_wsl", {})
 
-            enable_wsl    = bool(wsl_cfg.get("enable_wsl", False))
-            cfg_file_wsl  = str(wsl_cfg.get("cfg_file",      "") or "").strip()
-            ckpt_file_wsl = str(wsl_cfg.get("ckpt_file",     "") or "").strip()
-            infer_script  = str(wsl_cfg.get("infer_script",  "") or "").strip()
-            conda_env     = str(wsl_cfg.get("conda_env",     "openpcdet")).strip()
-            ext           = str(wsl_cfg.get("ext",           ".bin")).strip()
-            timeout_s     = int(wsl_cfg.get("wsl_timeout_s", 180))
-            tmp_dir_str   = str(wsl_cfg.get("tmp_dir",       "") or "").strip()
-            tmp_dir       = Path(tmp_dir_str) if tmp_dir_str else None
+            enable_wsl         = bool(wsl_cfg.get("enable_wsl", False))
+            cfg_file_wsl       = str(wsl_cfg.get("cfg_file",             "") or "").strip()
+            ckpt_file_wsl      = str(wsl_cfg.get("ckpt_file",            "") or "").strip()
+            infer_script       = str(wsl_cfg.get("infer_script",         "") or "").strip()
+            conda_env          = str(wsl_cfg.get("conda_env",  "openpcdet")).strip()
+            ext                = str(wsl_cfg.get("ext",            ".bin")).strip()
+            timeout_s          = int(wsl_cfg.get("wsl_timeout_s",     180))
+            tmp_dir_str        = str(wsl_cfg.get("tmp_dir",            "") or "").strip()
+            tmp_dir            = Path(tmp_dir_str) if tmp_dir_str else None
+            openpcdet_tools_dir = str(wsl_cfg.get("openpcdet_tools_dir", "") or "").strip()
 
             wsl_paths_ok = bool(cfg_file_wsl and ckpt_file_wsl and infer_script)
 
@@ -307,18 +308,19 @@ class AppController(QObject):
                 ui_log_cb = self.sig_log.emit
 
                 detector = OpenPCDetJsonDetector(
-                    cfg_file      = cfg_file_wsl,
-                    ckpt_file     = ckpt_file_wsl,
-                    infer_script  = infer_script,
-                    conda_env     = conda_env,
-                    ext           = ext,
-                    score_threshold = score_threshold,
-                    class_names   = class_names,
-                    wsl_timeout_s = timeout_s,
-                    num_boxes_fake= num_boxes_fake,
-                    tmp_dir       = tmp_dir,
-                    enable_wsl    = True,
-                    log_callback  = ui_log_cb,
+                    cfg_file            = cfg_file_wsl,
+                    ckpt_file           = ckpt_file_wsl,
+                    infer_script        = infer_script,
+                    conda_env           = conda_env,
+                    openpcdet_tools_dir = openpcdet_tools_dir,
+                    ext                 = ext,
+                    score_threshold     = score_threshold,
+                    class_names         = class_names,
+                    wsl_timeout_s       = timeout_s,
+                    num_boxes_fake      = num_boxes_fake,
+                    tmp_dir             = tmp_dir,
+                    enable_wsl          = True,
+                    log_callback        = ui_log_cb,
                 )
             else:
                 # ── 降级：旧版 OpenPCDetDetector（内置 fake）──────────
