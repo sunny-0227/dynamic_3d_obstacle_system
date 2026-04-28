@@ -146,11 +146,12 @@ class ConfigPage(QWidget):
         opc_lay.addWidget(self._make_hline())
         opc_lay.addSpacing(6)
 
-        self._le_infer_script = self._make_path_row(opc_lay, "推理脚本路径（WSL）：")
-        self._le_cfg_file     = self._make_path_row(opc_lay, "模型配置文件（WSL）：")
-        self._le_ckpt_file    = self._make_path_row(opc_lay, "模型权重文件（WSL）：")
-        self._le_conda_env    = self._make_path_row(opc_lay, "Conda 环境名称：")
-        self._le_tmp_dir      = self._make_path_row(opc_lay, "临时输出目录（Win）：")
+        self._le_infer_script     = self._make_path_row(opc_lay, "推理脚本路径（WSL）：")
+        self._le_cfg_file         = self._make_path_row(opc_lay, "模型配置文件（WSL）：")
+        self._le_ckpt_file        = self._make_path_row(opc_lay, "模型权重文件（WSL）：")
+        self._le_tools_dir        = self._make_path_row(opc_lay, "OpenPCDet tools 目录（WSL）：")
+        self._le_conda_env        = self._make_path_row(opc_lay, "Conda 环境名称：")
+        self._le_tmp_dir          = self._make_path_row(opc_lay, "临时输出目录（Win）：")
 
         opc_lay.addSpacing(6)
         hint = QLabel("⚠ 修改路径后需重启应用，检测器才会重新初始化。")
@@ -321,6 +322,7 @@ class ConfigPage(QWidget):
         self._le_infer_script.setText(str(wsl_cfg.get("infer_script", "")))
         self._le_cfg_file.setText(str(wsl_cfg.get("cfg_file", "")))
         self._le_ckpt_file.setText(str(wsl_cfg.get("ckpt_file", "")))
+        self._le_tools_dir.setText(str(wsl_cfg.get("openpcdet_tools_dir", "")))
         self._le_conda_env.setText(str(wsl_cfg.get("conda_env", "")))
         self._le_tmp_dir.setText(str(wsl_cfg.get("tmp_dir", "")))
 
@@ -374,12 +376,13 @@ class ConfigPage(QWidget):
             if "openpcdet_wsl" not in data["detector"]:
                 data["detector"]["openpcdet_wsl"] = {}
             wsl = data["detector"]["openpcdet_wsl"]
-            wsl["enable_wsl"]   = self._chk_enable_wsl.isChecked()
-            wsl["infer_script"] = self._le_infer_script.text().strip()
-            wsl["cfg_file"]     = self._le_cfg_file.text().strip()
-            wsl["ckpt_file"]    = self._le_ckpt_file.text().strip()
-            wsl["conda_env"]    = self._le_conda_env.text().strip()
-            wsl["tmp_dir"]      = self._le_tmp_dir.text().strip()
+            wsl["enable_wsl"]            = self._chk_enable_wsl.isChecked()
+            wsl["infer_script"]          = self._le_infer_script.text().strip()
+            wsl["cfg_file"]              = self._le_cfg_file.text().strip()
+            wsl["ckpt_file"]             = self._le_ckpt_file.text().strip()
+            wsl["openpcdet_tools_dir"]   = self._le_tools_dir.text().strip()
+            wsl["conda_env"]             = self._le_conda_env.text().strip()
+            wsl["tmp_dir"]               = self._le_tmp_dir.text().strip()
 
             # --- RealSense（新旧键名同时写，确保各处均可读到）---
             if "realtime" not in data:
