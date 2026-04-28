@@ -268,22 +268,26 @@ class OpenPCDetJsonDetector(BaseDetector):
     def _build_wsl_cmd(self, tmp_bin: Path, tmp_json: Path) -> str:
         """
         构造完整的 WSL bash 命令字符串。
-        使用 conda run 代替 conda activate，兼容非交互式 bash。
+
+        策略：先 source ~/.bashrc 让 conda 初始化生效，再用
+        conda activate + python 执行推理脚本。
+        这是在非交互式 wsl bash -lc 中最兼容的方式。
         """
         wsl_bin  = _win_to_wsl(tmp_bin)
         wsl_json = _win_to_wsl(tmp_json)
 
-        # conda run -n <env> python ... 比 conda activate && python 更适合 subprocess
-        parts = [
-            f"conda run -n {self._conda_env}",
-            f"python {self._infer_script}",
-            f"--cfg_file {self._cfg_file}",
-            f"--ckpt {self._ckpt_file}",
-            f"--data_path {wsl_bin}",
-            f"--ext {self._ext}",
-            f"--out_json {wsl_json}",
-        ]
-        return " ".join(parts)
+        # source ~/.bashrc 初始化 conda；conda activate 切换环境；再执行脚本
+        inner = (
+            f"source ~/.bashrc && "
+            f"conda activate {self._conda_env} && "
+            f"python {self._infer_script} "
+            f"--cfg_file {self._cfg_file} "
+            f"--ckpt {self._ckpt_file} "
+            f"--data_path {wsl_bin} "
+            f"--ext {self._ext} "
+            f"--out_json {wsl_json}"
+        )
+        return inner
 
     def _run_wsl_and_parse(
         self,
