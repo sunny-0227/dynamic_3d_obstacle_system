@@ -1,3 +1,6 @@
+# 本机路径配置（每台机器独立维护，不提交到 git）
+config/settings.yaml
+
 # Python 缓存（不提交，避免旧缓存导致修改不生效）
 __pycache__/
 *.pyc

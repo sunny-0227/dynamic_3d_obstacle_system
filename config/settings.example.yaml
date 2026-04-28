@@ -1,0 +1,181 @@
+# ==============================
+# 动态3D障碍物系统 - 全局配置
+# ==============================
+
+# 应用基本信息
+app:
+  # 窗口标题与顶栏主标题（正式课题名称）
+  main_title: "面向动态场景的三维障碍物检测与分割系统研究"
+  # 顶栏第二行副标题
+  subtitle: "三维点云感知与分析系统"
+  # 与主标题一致，用于日志 / QApplication 名称等
+  name: "面向动态场景的三维障碍物检测与分割系统研究"
+  # 兼容旧配置：若未设置 main_title，主窗口可读此键
+  thesis_title: "面向动态场景的三维障碍物检测与分割系统研究"
+  version: "1.0.0"
+  stage: "final"
+
+# 日志配置
+logging:
+  level: "DEBUG"          # DEBUG / INFO / WARNING / ERROR
+  to_file: true           # 是否写入文件
+  log_dir: "outputs/logs" # 日志输出目录（相对项目根目录）
+  filename: "app.log"
+
+# 点云加载配置
+pointcloud:
+  # bin_dtype / bin_cols 为预留项：当前 load_pointcloud 仍硬编码 float32 并自动识别 4/5 列
+  # 若需从配置注入，可在里程碑3+ 扩展 load_pointcloud(..., config=...)
+  bin_dtype: "float32"    # .bin 数据类型（预留，当前未读取）
+  bin_cols: 4             # .bin 列数（预留，当前自动检测 4 或 5 列）
+  default_data_dir: "data" # 单文件点云：GUI 选择框起始目录（相对项目根）
+
+# 伪检测器配置
+fake_detector:
+  num_boxes: 3            # 伪造检测框数量
+  score_range: [0.75, 0.99]  # 置信度随机范围
+
+# 伪分割器配置
+fake_segmentor:
+  num_classes: 4          # 语义类别数量
+  # 各类别颜色 [R, G, B]（归一化 0~1）
+  class_colors:
+    0: [0.5, 0.5, 0.5]   # 背景 - 灰色
+    1: [0.2, 0.8, 0.2]   # 植被 - 绿色
+    2: [0.8, 0.2, 0.2]   # 障碍物 - 红色
+    3: [0.2, 0.4, 0.9]   # 地面 - 蓝色
+
+# nuScenes mini 适配（里程碑2）
+nuscenes:
+  version: "v1.0-mini"           # 元数据子目录名，须与数据集根下文件夹一致
+  # default_dataroot：仅「选择数据集根目录」对话框的起始路径，不会自动当作已选根目录
+  default_dataroot: ""           # 空则起始目录为项目根；可填绝对路径或相对项目根的路径
+  # fixed_dataroot：非空且为有效目录、且存在 {version} 子目录时，启动后自动填入根路径（仍建议点一次「加载数据集」除非开启 auto_connect）
+  fixed_dataroot: ""             # 例: "/path/to/nuscenes" 或相对路径 "data/nuscenes"
+  auto_connect: false            # true 时窗口显示后立即连接数据集（首次启动可能卡顿数秒）
+
+# Open3D 可视化配置
+visualization:
+  window_title: "3D点云感知结果"
+  window_width: 1280
+  window_height: 720
+  background_color: [0.05, 0.05, 0.05]  # 深色背景
+  point_size: 2.0         # 点大小
+
+# 检测器配置（里程碑 3 / 里程碑 8 扩展）
+detector:
+  backend: "openpcdet"        # 预留字段
+  score_threshold: 0.1       # 置信度过滤阈值（真实推理与 fallback 均使用）
+  num_boxes_fake: 3          # fallback 占位实现生成的框数量
+  class_names:               # 统一类别名（1-based，与 infer_to_json 输出的 labels 对应）
+    - "car"
+    - "pedestrian"
+    - "cyclist"
+  openpcdet:
+    model_cfg: ""           # 旧版本字段，保留兼容（新版优先读 openpcdet_wsl）
+    checkpoint_path: ""
+    device: "cpu"
+
+  # ── WSL2 subprocess 推理配置（里程碑 8）─────────────────────────────
+  # enable_wsl: true 时优先通过 WSL2 调用 infer_to_json.py 执行真实检测；
+  #             false 时直接使用 fallback 模拟检测（离线开发/无 WSL 环境时使用）
+  openpcdet_wsl:
+    # 是否启用 WSL 推理（填写完整路径后改为 true）
+    enable_wsl: false
+
+    # infer_to_json.py 在 WSL 内的完整路径
+    # 示例："/mnt/c/Users/<用户名>/dynamic_3d_obstacle_system/infer_to_json.py"
+    infer_script: ""
+
+    # OpenPCDet tools 目录（WSL 路径），执行推理前会 cd 到此目录
+    # 确保 OpenPCDet 内部相对路径（cfgs/dataset_configs/...）能正确解析
+    # 示例："/home/<wsl用户>/OpenPCDet/tools"
+    openpcdet_tools_dir: ""
+
+    # OpenPCDet 模型配置文件（WSL 内路径）
+    # 示例："/home/<wsl用户>/OpenPCDet/tools/cfgs/kitti_models/pointpillar.yaml"
+    cfg_file: ""
+
+    # 模型权重 checkpoint（WSL 内路径）
+    # 示例："/mnt/d/<路径>/pointpillar.pth"
+    ckpt_file: ""
+
+    # WSL 中的 conda 环境名
+    conda_env: "openpcdet_py310"
+
+    # 点云文件扩展名
+    ext: ".bin"
+
+    # WSL 子进程超时（秒）：首次加载模型较慢，建议 180~300
+    wsl_timeout_s: 180
+
+    # JSON 结果输出目录（Windows 路径）
+    # 示例："D:/<路径>/openpcdet_result"（目录须已存在或具备写权限）
+    tmp_dir: ""
+
+# 分割器配置（里程碑 4）
+segmentor:
+  backend: "mmdet3d"          # 预留字段：当前仅实现 mmdet3d 占位封装
+  num_classes: 4              # 逐点类别数（占位实现使用）
+  # 可选：统一类别名（长度>=num_classes 时生效）
+  class_names:
+    - "background"
+    - "ground"
+    - "obstacle"
+    - "vegetation"
+  # 可选：调色板 {id: [r,g,b]}，归一化 0~1；为空时会尝试复用 fake_segmentor.class_colors
+  # palette:
+  #   0: [0.55, 0.55, 0.55]
+  #   1: [0.20, 0.55, 0.95]
+  #   2: [0.90, 0.25, 0.25]
+  #   3: [0.20, 0.85, 0.25]
+  mmdet3d:
+    config_file: ""          # MMDet3D 配置文件（为空则走占位实现）
+    checkpoint_file: ""      # MMDet3D 权重文件（为空则走占位实现）
+    device: "cpu"            # "cpu" 或 "cuda"
+
+# 实时模式配置（里程碑 7）
+realtime:
+  # 相机类型：
+  #   "mock"        — Mock Camera，从本地目录循环读取 .bin/.pcd，无需硬件（默认）
+  #   "realsense"   — Intel RealSense 深度相机，需安装 pyrealsense2 并连接硬件
+  camera_type: "realsense"
+
+  # ---------- Mock Camera 专属 ----------
+  # mock_fps：Mock Camera 目标帧率（节拍由 _RealtimeThread 的 sleep 控制）
+  mock_fps: 5.0
+  # mock_loop：是否循环读取目录（true=循环；false=读完停止）
+  mock_loop: true
+
+  # ---------- RealSense Camera 专属 ----------
+  # 深度流分辨率：424x240 点数约 5万，640x480 约 21万；建议演示用 424x240
+  width: 424
+  height: 240
+  # 深度流帧率（D435 支持：6/15/30/60/90，建议演示用 30）
+  fps: 30
+  # 设备序列号：多台相机时指定连接哪台；留空则连接第一台已识别设备
+  serial_number: ""
+  # 是否对齐深度帧到彩色帧坐标系（开启时需同时开启彩色流，会增加 CPU/带宽开销）
+  align_to_color: false
+  # 有效深度范围（米）：过滤过近噪点和超出量程的远处点
+  min_depth_m: 0.3
+  max_depth_m: 4.0
+  # wait_for_frames 超时（毫秒）；演示时建议 1000-2000，降低断开时的等待卡顿
+  timeout_ms: 2000
+
+  # ---------- 帧率控制（对 Mock 和 RealSense 均生效）----------
+  # raw_fps：预览模式（仅读帧不分析）的目标帧率
+  raw_fps: 10.0
+  # analysis_fps：实时分析模式的目标调度帧率（算法若超时则以实际耗时为准）
+  analysis_fps: 5.0
+
+  # ---------- 性能优化参数 ----------
+  # voxel_size：点云 voxel 下采样体素大小（米）；0 表示不下采样
+  # 424x240@4m 有效点约 5万，voxel=0.05 后约 8000~15000 点，处理速度大幅提升
+  voxel_size: 0.05
+  # max_points_for_process：下采样后超过此点数时随机再次抽稀
+  max_points_for_process: 20000
+  # max_points_for_display：送入 Open3D 渲染的最大点数（超出则随机抽稀）
+  max_points_for_display: 30000
+  # process_interval：每隔几帧执行一次算法分析（1=每帧，3=每3帧，提升流畅度）
+  process_interval: 1
