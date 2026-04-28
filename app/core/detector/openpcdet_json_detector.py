@@ -267,7 +267,7 @@ class OpenPCDetJsonDetector(BaseDetector):
                     probe_cmd,
                     capture_output=True, text=True, timeout=10,
                 )
-                out = result.stdout.strip()
+                out = (result.stdout or "").strip()  # stdout 可能为 None，先做 None 检查
                 self._ui_log(f"[OpenPCDet] 探测 {sh} → {out}")
                 if out == "YES":
                     self._resolved_conda_sh = sh
@@ -387,8 +387,9 @@ class OpenPCDetJsonDetector(BaseDetector):
             f"[OpenPCDet] WSL 进程结束 | 耗时={elapsed_ms:.0f}ms | 退出码={proc.returncode}"
         )
 
-        # 完整打印 stdout（最多 30 行）
-        stdout_lines = proc.stdout.strip().splitlines() if proc.stdout.strip() else []
+        # 完整打印 stdout（最多 30 行）；proc.stdout 可能为 None，先做 None 检查
+        raw_stdout = proc.stdout or ""
+        stdout_lines = raw_stdout.strip().splitlines() if raw_stdout.strip() else []
         if stdout_lines:
             self._ui_log(f"[OpenPCDet] stdout（共 {len(stdout_lines)} 行）：")
             for line in stdout_lines[:30]:
@@ -397,8 +398,9 @@ class OpenPCDetJsonDetector(BaseDetector):
         else:
             self._ui_log("[OpenPCDet] stdout: (空)")
 
-        # 完整打印 stderr（最多 50 行）
-        stderr_lines = proc.stderr.strip().splitlines() if proc.stderr.strip() else []
+        # 完整打印 stderr（最多 50 行）；同样做 None 检查
+        raw_stderr = proc.stderr or ""
+        stderr_lines = raw_stderr.strip().splitlines() if raw_stderr.strip() else []
         if stderr_lines:
             self._ui_log(f"[OpenPCDet] stderr（共 {len(stderr_lines)} 行）：")
             for line in stderr_lines[:50]:
@@ -410,7 +412,7 @@ class OpenPCDetJsonDetector(BaseDetector):
         if proc.returncode != 0:
             reason = (
                 f"WSL 退出码={proc.returncode}，耗时={elapsed_ms:.0f}ms。"
-                f"stderr 末段：{proc.stderr.strip()[-400:] if proc.stderr else '(空)'}"
+                f"stderr 末段：{raw_stderr.strip()[-400:] if raw_stderr.strip() else '(空)'}"
             )
             return self._fallback(pts_xyz, reason=reason)
 

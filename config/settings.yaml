@@ -84,8 +84,8 @@ detector:
     enable_wsl: true
 
     # infer_to_json.py 在 WSL 内的完整路径
-    # 注意：该脚本位于 Windows 项目根目录，通过 /mnt/d/... 访问
-    infer_script: "/mnt/d/sunny/dynamic_3d_obstacle_system/infer_to_json.py"
+    # 注意：该脚本位于 Windows 项目根目录，通过 /mnt/c/... 访问
+    infer_script: "/mnt/c/Users/28103/dynamic_3d_obstacle_system/infer_to_json.py"
 
     # OpenPCDet 模型配置文件（WSL 内路径）
     # ⚠ 请确认你的 PointPillar yaml 实际路径，下方为常见默认位置
