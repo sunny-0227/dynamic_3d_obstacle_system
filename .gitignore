@@ -1,0 +1,21 @@
+# Python 缓存（不提交，避免旧缓存导致修改不生效）
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 日志输出
+outputs/logs/
+*.log
+
+# 临时检测结果（OpenPCDet 输出的 JSON/bin 临时文件）
+_openpcdet_input_*.bin
+_openpcdet_result_*.json
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
