@@ -326,9 +326,14 @@ class OpenPCDetJsonDetector(BaseDetector):
         wsl_bin  = _win_to_wsl(tmp_bin)
         wsl_json = _win_to_wsl(tmp_json)
 
+        # cd 到 infer_to_json.py 所在目录（即 OpenPCDet/tools）后再执行，
+        # 确保 OpenPCDet 内部的相对路径（cfgs/dataset_configs/...）能正确解析。
+        script_dir = self._infer_script.rsplit("/", 1)[0] if "/" in self._infer_script else "."
+
         cmd = (
             f"source {conda_sh} && "
             f"conda activate {self._conda_env} && "
+            f"cd {script_dir} && "
             f"python {self._infer_script} "
             f"--cfg_file {self._cfg_file} "
             f"--ckpt {self._ckpt_file} "
