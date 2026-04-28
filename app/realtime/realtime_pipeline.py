@@ -1,39 +1,15 @@
 from __future__ import annotations
 
 """
-实时流水线（双模式）
+实时流水线（双模式）—— 性能优化版
 
-提供两种可独立使用的实时处理流水线：
+性能优化重点：
+  1. voxel downsample：每帧采集后先做体素下采样，控制算法输入点数
+  2. process_interval：每 N 帧执行一次算法，其余帧只读帧（提升显示帧率）
+  3. max_points_for_process：下采样后仍超量时随机再次抽稀
+  4. 分离「相机 FPS」和「处理 FPS」：结果中单独携带两个值
 
-  RealtimePipeline（已有）
-  ─────────────────────────
-  · 持有 IPointCloudCamera + FullPipeline（重量级离线模型）
-  · 两种帧消费：
-      read_raw()         — 仅读帧，不做分析；适合预览
-      read_and_analyze() — 读帧 + 检测 + 分割 + 融合（调大模型）
-  · 适合接入真实 OpenPCDet / MMDet3D；离线 demo 常用。
-
-  LightweightRealtimePipeline（本次新增）
-  ─────────────────────────────────────────
-  · 持有 IPointCloudCamera + LightweightSegmentor + LightweightDetector
-  · 不依赖 GPU 大模型；全纯 numpy/scipy/sklearn 实现
-  · 两种帧消费：
-      read_raw()         — 仅读帧，与 RealtimePipeline 一致
-      read_and_analyze() — 读帧 → RANSAC 地面分割 → DBSCAN 聚类检测 →
-                           FusedScene（含彩色点云 + OBB）
-  · 特性：
-      - 分割结果：地面（棕）/ 障碍物（红）/ 背景（灰）/ 噪点（深灰）
-      - 检测结果：每个聚类生成 DetectionBox + Open3D OBB
-      - 处理速度：128k 点约 10-30ms（取决于机器配置）
-      - 可替换性：只需换 LightweightSegmentor / LightweightDetector 实现即可
-
-  两个 pipeline 共用相同接口契约（read_raw / read_and_analyze / start / stop），
-  可由 AppController 根据配置选择实例化哪个。
-
-扩展说明：
-  · 替换相机：修改 AppController._build_camera() 传入不同 IPointCloudCamera
-  · 替换轻量算法：替换 LightweightSegmentor / LightweightDetector 的 config 或子类
-  · 切换到重量级 pipeline：使用 RealtimePipeline + FullPipeline
+两种 Pipeline 的接口保持不变（read_raw / read_and_analyze / start / stop）。
 """
 
 import time
@@ -75,171 +51,226 @@ class RealtimeResult:
     单帧处理结果（两个 pipeline 共用）。
 
     字段说明：
-      frame     — 原始帧数据（CameraFrame）
-      scene     — 融合场景（FusedScene），仅在 read_and_analyze() 时非 None
-      clusters  — 轻量 pipeline 的聚类结果列表（RealtimePipeline 时为空）
-      elapsed   — 本帧总处理耗时（秒）
+      frame         — 原始帧数据（CameraFrame，points_xyz 为相机原始点云）
+      scene         — 融合场景（FusedScene），仅在 read_and_analyze() 时非 None
+      clusters      — 轻量 pipeline 的聚类结果列表
+      elapsed       — 本帧总处理耗时（秒）
+      camera_fps    — 相机实际采集帧率（Hz）
+      process_fps   — 算法实际处理帧率（Hz），仅分析帧有效，其余帧为 0
+      raw_points    — 相机原始点数（下采样前）
+      proc_points   — 算法实际处理点数（下采样后）
+      proc_elapsed  — 算法部分耗时（秒），不含读帧时间
     """
-
     frame: CameraFrame
     scene: Optional[FusedScene]
     clusters: List[ClusterResult] = field(default_factory=list)
     elapsed: float = 0.0
+    camera_fps: float = 0.0
+    process_fps: float = 0.0
+    raw_points: int = 0
+    proc_points: int = 0
+    proc_elapsed: float = 0.0
 
 
 # ---------------------------------------------------------------------------
-# ① RealtimePipeline（原有，保持不变）
+# 点云下采样工具函数
+# ---------------------------------------------------------------------------
+
+def _voxel_downsample(pts_xyz: np.ndarray, voxel_size: float) -> np.ndarray:
+    """
+    体素下采样：将点云网格化，每个体素取一个代表点（质心近似用第一个点）。
+
+    参数：
+      pts_xyz    — (N, 3) float32
+      voxel_size — 体素边长（米），0 或负数表示不下采样
+
+    返回：下采样后的 (M, 3) float32，M <= N
+    """
+    if voxel_size <= 0 or pts_xyz.shape[0] == 0:
+        return pts_xyz
+
+    # 尝试用 Open3D 的高质量 voxel_down_sample
+    try:
+        import open3d as o3d
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pts_xyz.astype(np.float64))
+        down = pcd.voxel_down_sample(voxel_size)
+        result = np.asarray(down.points, dtype=np.float32)
+        return result
+    except Exception:
+        pass
+
+    # 降级：手动体素网格（无 Open3D 时）
+    vox_idx = np.floor(pts_xyz / voxel_size).astype(np.int32)
+    # 用 tuple key 构建 dict，取每个 voxel 内第一个点
+    seen: dict = {}
+    keep = []
+    for i, vi in enumerate(map(tuple, vox_idx)):
+        if vi not in seen:
+            seen[vi] = i
+            keep.append(i)
+    return pts_xyz[keep]
+
+
+def _random_subsample(pts_xyz: np.ndarray, max_points: int) -> np.ndarray:
+    """随机抽稀：当点数超过 max_points 时随机选取 max_points 个点。"""
+    if max_points <= 0 or pts_xyz.shape[0] <= max_points:
+        return pts_xyz
+    idx = np.random.choice(pts_xyz.shape[0], size=max_points, replace=False)
+    return pts_xyz[idx]
+
+
+# ---------------------------------------------------------------------------
+# ① RealtimePipeline（已有，加入下采样支持）
 # ---------------------------------------------------------------------------
 class RealtimePipeline:
     """
     实时处理流水线：Camera → (可选)FullPipeline → RealtimeResult
 
     参数：
-      camera        — 任意 IPointCloudCamera 实现（Mock / RealSense / ...）
-      full_pipeline — FullPipeline 实例（检测 + 分割 + 融合）
+      camera              — 任意 IPointCloudCamera 实现
+      full_pipeline       — FullPipeline 实例
+      voxel_size          — 点云下采样体素大小（米），0 表示不下采样
+      max_points_for_proc — 下采样后仍超量则随机再抽稀
+      max_points_for_disp — 送显示的最大点数
+      process_interval    — 每 N 帧分析一次（1=每帧均分析）
     """
 
-    def __init__(self, camera: IPointCloudCamera, full_pipeline: FullPipeline) -> None:
+    def __init__(
+        self,
+        camera: IPointCloudCamera,
+        full_pipeline: FullPipeline,
+        voxel_size: float = 0.0,
+        max_points_for_proc: int = 0,
+        max_points_for_disp: int = 0,
+        process_interval: int = 1,
+    ) -> None:
         self._camera = camera
         self._full_pipeline = full_pipeline
-
-    # ------------------------------------------------------------------
-    # 代理属性（方便外层查询相机状态，不暴露 _camera 引用）
-    # ------------------------------------------------------------------
+        self._voxel_size = float(voxel_size)
+        self._max_proc = int(max_points_for_proc)
+        self._max_disp = int(max_points_for_disp)
+        self._proc_interval = max(1, int(process_interval))
+        self._frame_counter = 0        # 内部帧计数（用于 process_interval 判断）
+        self._prev_cam_t: float = 0.0  # 上一帧时间（计算相机 FPS）
+        self._prev_proc_t: float = 0.0 # 上一次分析时间（计算处理 FPS）
 
     @property
     def source_name(self) -> str:
-        """数据源名称，来自相机的 source_name 属性。"""
         return self._camera.source_name
 
     @property
     def is_running(self) -> bool:
-        """当前相机是否处于运行状态。"""
         return self._camera.is_running
 
     @property
     def camera_info(self) -> CameraInfo:
-        """返回相机元数据（帧数、文件索引、总文件数等）。"""
         return self._camera.camera_info
 
-    # ------------------------------------------------------------------
-    # 生命周期
-    # ------------------------------------------------------------------
-
     def start(self) -> None:
-        """
-        启动相机。
-        异常会向上透传，由 AppController 捕获并提示用户。
-        """
         logger.info("[RealtimePipeline] 启动相机：%s", self._camera.source_name)
         self._camera.start()
-        logger.info("[RealtimePipeline] 相机已启动，共 %d 帧可用", self.camera_info.total_files)
+        self._frame_counter = 0
+        self._prev_cam_t = time.perf_counter()
 
     def stop(self) -> None:
-        """停止相机（幂等）。"""
         logger.info("[RealtimePipeline] 停止相机：%s", self._camera.source_name)
         self._camera.stop()
 
-    # ------------------------------------------------------------------
-    # 帧消费模式
-    # ------------------------------------------------------------------
-
     def read_raw(self) -> RealtimeResult:
-        """
-        仅读取下一帧，不执行任何算法分析。
-
-        适用场景：
-          - 预览模式（查看点云帧率/连通性）
-          - 帧率基准测试
-
-        返回：RealtimeResult（scene=None）
-        异常：传递自 camera.get_next_frame()
-        """
+        """仅读取下一帧，不执行算法分析。"""
         t0 = time.perf_counter()
-
         frame = self._camera.get_next_frame()
+        now = time.perf_counter()
 
-        elapsed = time.perf_counter() - t0
-        n_pts = int(frame.points_xyz.shape[0])
+        cam_fps = 1.0 / max(now - self._prev_cam_t, 1e-6)
+        self._prev_cam_t = now
+        raw_pts = int(frame.points_xyz.shape[0])
 
-        logger.debug(
-            "[RealtimePipeline] read_raw | 帧 #%d | 点数：%d | 耗时：%.1f ms",
-            frame.frame_id,
-            n_pts,
-            elapsed * 1000,
+        elapsed = now - t0
+        return RealtimeResult(
+            frame=frame, scene=None, elapsed=elapsed,
+            camera_fps=cam_fps, process_fps=0.0,
+            raw_points=raw_pts, proc_points=raw_pts,
         )
 
-        return RealtimeResult(frame=frame, scene=None, elapsed=elapsed)
-
     def read_and_analyze(self) -> RealtimeResult:
-        """
-        读取下一帧并执行检测 + 分割 + 融合分析。
-
-        适用场景：
-          - 实时分析模式
-
-        返回：RealtimeResult（scene 包含 FusedScene）
-        异常：
-          - camera.get_next_frame() 的异常向上透传
-          - FullPipeline 内部异常向上透传（由 _RealtimeThread 捕获并停止）
-        """
+        """读取帧并（按 process_interval）执行分析。"""
         t0 = time.perf_counter()
-
         frame = self._camera.get_next_frame()
+        now = time.perf_counter()
+
+        cam_fps = 1.0 / max(now - self._prev_cam_t, 1e-6)
+        self._prev_cam_t = now
+        self._frame_counter += 1
+        raw_pts = int(frame.points_xyz.shape[0])
+
+        # 判断本帧是否执行算法
+        do_process = (self._frame_counter % self._proc_interval == 0)
+
+        if not do_process:
+            return RealtimeResult(
+                frame=frame, scene=None, elapsed=now - t0,
+                camera_fps=cam_fps, process_fps=0.0,
+                raw_points=raw_pts, proc_points=0,
+            )
+
+        # 下采样
+        pts = np.array(frame.points_xyz, dtype=np.float32)
+        if pts.ndim == 1:
+            pts = pts.reshape(-1, 3)
+        pts = pts[:, :3]
+        pts = _voxel_downsample(pts, self._voxel_size)
+        pts = _random_subsample(pts, self._max_proc)
+        proc_pts = int(pts.shape[0])
 
         t_algo = time.perf_counter()
-        # copy=True：避免 FullPipeline 内部操作意外修改 CameraFrame 里的原始数组
-        pts = np.array(frame.points_xyz, dtype=np.float32)
         scene: Optional[FusedScene] = self._full_pipeline.run(pts)
         t_end = time.perf_counter()
 
-        elapsed = t_end - t0
-        algo_ms = (t_end - t_algo) * 1000
-        read_ms = (t_algo - t0) * 1000
-        n_pts = int(pts.shape[0])
+        proc_fps = 1.0 / max(t_end - self._prev_proc_t, 1e-6)
+        self._prev_proc_t = t_end
+        proc_elapsed = t_end - t_algo
 
         logger.debug(
-            "[RealtimePipeline] read_and_analyze | 帧 #%d | 点数：%d | "
-            "读帧：%.1f ms | 算法：%.1f ms | 总计：%.1f ms",
-            frame.frame_id,
-            n_pts,
-            read_ms,
-            algo_ms,
-            elapsed * 1000,
+            "[RealtimePipeline] 帧 #%d | 原始=%d 下采=%d | 相机%.1ffps 处理%.1ffps | 算法%.0fms",
+            frame.frame_id, raw_pts, proc_pts, cam_fps, proc_fps, proc_elapsed * 1000,
         )
 
-        return RealtimeResult(frame=frame, scene=scene, elapsed=elapsed)
+        return RealtimeResult(
+            frame=frame, scene=scene,
+            elapsed=t_end - t0,
+            camera_fps=cam_fps, process_fps=proc_fps,
+            raw_points=raw_pts, proc_points=proc_pts,
+            proc_elapsed=proc_elapsed,
+        )
 
     def __repr__(self) -> str:
         return (
-            f"RealtimePipeline("
-            f"camera={self._camera.source_name}, "
-            f"running={self.is_running}"
-            f")"
+            f"RealtimePipeline(camera={self._camera.source_name}, "
+            f"voxel={self._voxel_size}, interval={self._proc_interval})"
         )
 
 
 # ---------------------------------------------------------------------------
-# ② LightweightRealtimePipeline（新增）
+# ② LightweightRealtimePipeline（轻量版，加入下采样支持）
 # ---------------------------------------------------------------------------
 class LightweightRealtimePipeline:
     """
     轻量级实时处理流水线：Camera → RANSAC 分割 → DBSCAN 聚类 → FusedScene
 
-    与 RealtimePipeline 的区别：
-      - 不依赖 FullPipeline（不需要 GPU / OpenPCDet / MMDet3D）
-      - 使用 LightweightSegmentor + LightweightDetector
-      - read_and_analyze() 的数据流：
-          1. camera.get_next_frame() → CameraFrame（原始点云）
-          2. LightweightSegmentor.segment() → 地面/障碍物/背景标签
-          3. 提取 SEG_OBSTACLE 点作为聚类输入
-          4. LightweightDetector.detect() → DetectionBox + ClusterResult
-          5. _build_fused_scene() → FusedScene（供 SceneRenderer / GUI 使用）
+    性能优化：
+      - voxel_size 控制输入算法的点数（推荐 0.03~0.05m）
+      - max_points_for_proc 二次随机抽稀上限
+      - process_interval 每 N 帧执行一次算法
 
     参数：
-      camera      — 任意 IPointCloudCamera 实现
-      seg_config  — 地面分割参数；None 使用默认
-      det_config  — 聚类检测参数；None 使用默认
+      camera              — 任意 IPointCloudCamera 实现
+      seg_config          — 地面分割参数
+      det_config          — 聚类检测参数
+      voxel_size          — voxel 下采样大小（米），0=不下采样
+      max_points_for_proc — 算法输入最大点数
+      process_interval    — 每 N 帧分析一次
     """
 
     def __init__(
@@ -247,15 +278,20 @@ class LightweightRealtimePipeline:
         camera: IPointCloudCamera,
         seg_config: Optional[GroundSegConfig] = None,
         det_config: Optional[ClusterConfig] = None,
+        voxel_size: float = 0.05,
+        max_points_for_proc: int = 20000,
+        process_interval: int = 1,
     ) -> None:
         self._camera = camera
         self._segmentor = LightweightSegmentor(config=seg_config)
         self._detector = LightweightDetector(config=det_config)
         self._fusion = ResultFusion()
-
-    # ------------------------------------------------------------------
-    # 代理属性（与 RealtimePipeline 接口一致）
-    # ------------------------------------------------------------------
+        self._voxel_size = float(voxel_size)
+        self._max_proc = int(max_points_for_proc)
+        self._proc_interval = max(1, int(process_interval))
+        self._frame_counter = 0
+        self._prev_cam_t: float = 0.0
+        self._prev_proc_t: float = 0.0
 
     @property
     def source_name(self) -> str:
@@ -269,73 +305,68 @@ class LightweightRealtimePipeline:
     def camera_info(self) -> CameraInfo:
         return self._camera.camera_info
 
-    # ------------------------------------------------------------------
-    # 生命周期
-    # ------------------------------------------------------------------
-
     def start(self) -> None:
-        """启动相机，异常向上透传。"""
         logger.info("[LightweightRealtimePipeline] 启动相机：%s", self._camera.source_name)
         self._camera.start()
-        logger.info(
-            "[LightweightRealtimePipeline] 相机已启动，共 %d 帧可用",
-            self.camera_info.total_files,
-        )
+        self._frame_counter = 0
+        self._prev_cam_t = time.perf_counter()
 
     def stop(self) -> None:
-        """停止相机（幂等）。"""
         logger.info("[LightweightRealtimePipeline] 停止相机：%s", self._camera.source_name)
         self._camera.stop()
 
-    # ------------------------------------------------------------------
-    # 帧消费模式（接口与 RealtimePipeline 完全一致）
-    # ------------------------------------------------------------------
-
     def read_raw(self) -> RealtimeResult:
-        """
-        仅读取下一帧，不执行分割/检测。
-
-        适用：预览模式、帧率测试。
-        返回：RealtimeResult（scene=None, clusters=[]）
-        """
+        """仅读取下一帧，不执行分割/检测。"""
         t0 = time.perf_counter()
         frame = self._camera.get_next_frame()
-        elapsed = time.perf_counter() - t0
-
-        logger.debug(
-            "[LightweightRealtimePipeline] read_raw | 帧 #%d | 点数：%d | 耗时：%.1f ms",
-            frame.frame_id,
-            int(frame.points_xyz.shape[0]),
-            elapsed * 1000,
+        now = time.perf_counter()
+        cam_fps = 1.0 / max(now - self._prev_cam_t, 1e-6)
+        self._prev_cam_t = now
+        raw_pts = int(frame.points_xyz.shape[0])
+        return RealtimeResult(
+            frame=frame, scene=None, clusters=[],
+            elapsed=now - t0,
+            camera_fps=cam_fps, process_fps=0.0,
+            raw_points=raw_pts, proc_points=raw_pts,
         )
-        return RealtimeResult(frame=frame, scene=None, clusters=[], elapsed=elapsed)
 
     def read_and_analyze(self) -> RealtimeResult:
         """
-        读取一帧并执行轻量分割 + 聚类检测 + 融合。
-
-        处理步骤（含耗时日志）：
-          T0 → 读帧
-          T1 → RANSAC 地面分割（生成语义标签 + 彩色点云）
-          T2 → 提取障碍物候选点 → DBSCAN 聚类 → DetectionBox + OBB
-          T3 → 组装 FusedScene
-
-        返回：RealtimeResult（scene=FusedScene, clusters=ClusterResult列表）
-        异常：camera / segmentor / detector 内部异常向上透传。
+        读取一帧并（按 process_interval）执行轻量分割 + 聚类检测 + 融合。
         """
         t0 = time.perf_counter()
 
-        # ── 步骤 1：读帧 ─────────────────────────────────────────────
+        # ── 读帧 ─────────────────────────────────────────────────────
         frame = self._camera.get_next_frame()
-        # 强制拷贝，防止后续算法意外修改 CameraFrame 内部数组
-        pts_xyz = np.array(frame.points_xyz, dtype=np.float32)
-        if pts_xyz.ndim == 1:
-            pts_xyz = pts_xyz.reshape(-1, 3)
-        pts_xyz = pts_xyz[:, :3]
+        now = time.perf_counter()
+        cam_fps = 1.0 / max(now - self._prev_cam_t, 1e-6)
+        self._prev_cam_t = now
+        self._frame_counter += 1
 
-        t1 = time.perf_counter()
+        raw_pts_xyz = np.array(frame.points_xyz, dtype=np.float32)
+        if raw_pts_xyz.ndim == 1:
+            raw_pts_xyz = raw_pts_xyz.reshape(-1, 3)
+        raw_pts_xyz = raw_pts_xyz[:, :3]
+        raw_n = int(raw_pts_xyz.shape[0])
 
-        # ── 步骤 2：轻量语义分割 ─────────────────────────────────────
+        # 判断本帧是否执行算法
+        do_process = (self._frame_counter % self._proc_interval == 0)
+        if not do_process:
+            return RealtimeResult(
+                frame=frame, scene=None, clusters=[],
+                elapsed=time.perf_counter() - t0,
+                camera_fps=cam_fps, process_fps=0.0,
+                raw_points=raw_n, proc_points=0,
+            )
+
+        # ── 下采样 ────────────────────────────────────────────────────
+        pts_xyz = _voxel_downsample(raw_pts_xyz, self._voxel_size)
+        pts_xyz = _random_subsample(pts_xyz, self._max_proc)
+        proc_n = int(pts_xyz.shape[0])
+
+        t_algo = time.perf_counter()
+
+        # ── 轻量语义分割 ─────────────────────────────────────────────
         seg_result, colored_pcd = self._segmentor.segment_with_colored_pcd(pts_xyz)
         seg_out = SegmentPipelineOutput(
             points_xyz=pts_xyz,
@@ -345,7 +376,7 @@ class LightweightRealtimePipeline:
 
         t2 = time.perf_counter()
 
-        # ── 步骤 3：提取障碍物候选点，执行聚类检测 ────────────────────
+        # ── 聚类检测（仅对障碍物候选点执行）────────────────────────
         obstacle_mask = seg_result.labels == SEG_OBSTACLE
         obstacle_pts = pts_xyz[obstacle_mask]
 
@@ -354,10 +385,7 @@ class LightweightRealtimePipeline:
         det_obbs: Optional[list] = None
 
         if obstacle_pts.shape[0] >= self._detector._cfg.cluster_min_points:
-            # detect_with_obbs 是 LightweightDetector 的公开接口，直接调用
-            detections, clusters, det_obbs = self._detector.detect_with_obbs(
-                obstacle_pts
-            )
+            detections, clusters, det_obbs = self._detector.detect_with_obbs(obstacle_pts)
         else:
             logger.debug(
                 "[LightweightRealtimePipeline] 障碍物候选点不足（%d），跳过聚类",
@@ -366,7 +394,7 @@ class LightweightRealtimePipeline:
 
         t3 = time.perf_counter()
 
-        # ── 步骤 4：组装 FusedScene ───────────────────────────────────
+        # ── 组装 FusedScene ───────────────────────────────────────────
         scene = self._build_fused_scene(
             pts_xyz=pts_xyz,
             seg_out=seg_out,
@@ -374,34 +402,30 @@ class LightweightRealtimePipeline:
             det_obbs=det_obbs,
         )
 
-        elapsed = time.perf_counter() - t0
-        n_pts = int(pts_xyz.shape[0])
-        n_obs = int(obstacle_pts.shape[0])
+        t_end = time.perf_counter()
+        proc_fps = 1.0 / max(t_end - self._prev_proc_t, 1e-6)
+        self._prev_proc_t = t_end
+        proc_elapsed = t_end - t_algo
 
         logger.debug(
-            "[LightweightRealtimePipeline] read_and_analyze | 帧 #%d | 总点数：%d | "
-            "障碍物点：%d | 聚类数：%d | "
-            "读帧：%.1f ms | 分割：%.1f ms | 检测：%.1f ms | 总计：%.1f ms",
-            frame.frame_id,
-            n_pts,
-            n_obs,
-            len(detections),
-            (t1 - t0) * 1000,
-            (t2 - t1) * 1000,
-            (t3 - t2) * 1000,
-            elapsed * 1000,
+            "[LightweightRealtimePipeline] 帧 #%d | 原始=%d 下采=%d | "
+            "相机%.1ffps 处理%.1ffps | 分割%.0fms 检测%.0fms 总%.0fms",
+            frame.frame_id, raw_n, proc_n,
+            cam_fps, proc_fps,
+            (t2 - t_algo) * 1000, (t3 - t2) * 1000, proc_elapsed * 1000,
         )
 
         return RealtimeResult(
             frame=frame,
             scene=scene,
             clusters=clusters,
-            elapsed=elapsed,
+            elapsed=t_end - t0,
+            camera_fps=cam_fps,
+            process_fps=proc_fps,
+            raw_points=raw_n,
+            proc_points=proc_n,
+            proc_elapsed=proc_elapsed,
         )
-
-    # ------------------------------------------------------------------
-    # 内部：构造 FusedScene
-    # ------------------------------------------------------------------
 
     def _build_fused_scene(
         self,
@@ -410,12 +434,6 @@ class LightweightRealtimePipeline:
         detections: List[DetectionBox],
         det_obbs: Optional[list],
     ) -> FusedScene:
-        """
-        将分割结果 + 检测结果打包为 FusedScene。
-
-        注意：det_obbs 已由 LightweightDetector 生成，直接注入 FusedScene，
-        无需再经过 ResultFusion 的 BoxConverter（避免重复 convert 产生颜色丢失）。
-        """
         coord = CoordinateSystemSpec()
         fused = self._fusion.fuse(
             points_xyz=pts_xyz,
@@ -423,9 +441,7 @@ class LightweightRealtimePipeline:
             detections=detections,
             coord_spec=coord,
         )
-        # 用轻量检测器已生成的彩色 OBB 覆盖 fusion 默认生成的 OBB
         if det_obbs is not None:
-            # FusedScene 是 frozen dataclass，需创建新实例
             fused = FusedScene(
                 coord=fused.coord,
                 points_xyz=fused.points_xyz,
@@ -437,8 +453,6 @@ class LightweightRealtimePipeline:
 
     def __repr__(self) -> str:
         return (
-            f"LightweightRealtimePipeline("
-            f"camera={self._camera.source_name}, "
-            f"running={self.is_running}"
-            f")"
+            f"LightweightRealtimePipeline(camera={self._camera.source_name}, "
+            f"voxel={self._voxel_size}, interval={self._proc_interval})"
         )

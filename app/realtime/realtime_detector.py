@@ -156,12 +156,19 @@ class LightweightDetector:
             if lbl == -1:
                 continue  # DBSCAN 噪点
             mask = labels_cluster == lbl
-            cluster_pts = pts_xyz[mask]
-            n = int(cluster_pts.shape[0])
+            n = int(mask.sum())
 
             cfg = self._cfg
-            if n < cfg.cluster_min_points or n > cfg.cluster_max_points:
+            # 过小聚类：噪点残留，直接跳过
+            if n < cfg.cluster_min_points:
                 continue
+            # 过大聚类：通常是墙体/地面残留，跳过而非下采样（避免产生误框）
+            if n > cfg.cluster_max_points:
+                logger.debug(
+                    "[LightweightDetector] 跳过过大聚类（%d 点 > max %d）", n, cfg.cluster_max_points
+                )
+                continue
+            cluster_pts = pts_xyz[mask]
 
             # 生成边界框
             if cfg.use_pca_obb:

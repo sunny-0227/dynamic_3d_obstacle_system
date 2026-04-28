@@ -39,7 +39,7 @@ from app.io.pointcloud_loader import (
 )
 from app.realtime.mock_camera import MockCamera
 from app.realtime.realsense_camera import RealSenseCamera
-from app.realtime.realtime_pipeline import RealtimePipeline
+from app.realtime.realtime_pipeline import LightweightRealtimePipeline, RealtimePipeline
 from app.utils.logger import get_logger
 
 logger = get_logger("ui.controller")
@@ -126,9 +126,14 @@ class AppState:
     realtime_stream_dir: Optional[Path] = None
     realtime_running: bool = False
     realtime_analyzing: bool = False
-    realtime_fps: float = 0.0
-    realtime_points: int = 0
-    realtime_obstacles: int = 0    # 当前帧聚类检测到的障碍物数量
+    realtime_fps: float = 0.0          # 相机采集 FPS（向后兼容）
+    realtime_camera_fps: float = 0.0   # 相机采集 FPS（新）
+    realtime_process_fps: float = 0.0  # 算法处理 FPS
+    realtime_points: int = 0           # 相机原始点数
+    realtime_raw_points: int = 0       # 相机原始点数（新）
+    realtime_proc_points: int = 0      # 下采样后点数
+    realtime_obstacles: int = 0        # 当前帧聚类检测到的障碍物数量
+    realtime_proc_elapsed_ms: float = 0.0  # 本帧算法耗时（ms）
     realtime_source: str = "Mock"
 
 
@@ -776,20 +781,26 @@ class AppController(QObject):
         camera_type = str(rt_cfg.get("camera_type", "mock")).lower().strip()
 
         if camera_type == "realsense":
+            # 分辨率优先读 camera_width/camera_height（新配置项），
+            # 向后兼容旧版 width/height 键
+            cam_w = int(rt_cfg.get("camera_width", rt_cfg.get("width", 424)))
+            cam_h = int(rt_cfg.get("camera_height", rt_cfg.get("height", 240)))
+            cam_fps = int(rt_cfg.get("camera_fps", rt_cfg.get("fps", 30)))
+            min_d = float(rt_cfg.get("min_depth", rt_cfg.get("min_depth_m", 0.3)))
+            max_d = float(rt_cfg.get("max_depth", rt_cfg.get("max_depth_m", 4.0)))
             cam = RealSenseCamera(
-                width=int(rt_cfg.get("width", 640)),
-                height=int(rt_cfg.get("height", 480)),
-                fps=int(rt_cfg.get("fps", 30)),
+                width=cam_w,
+                height=cam_h,
+                fps=cam_fps,
                 serial_number=str(rt_cfg.get("serial_number", "")),
                 align_to_color=bool(rt_cfg.get("align_to_color", False)),
-                min_depth_m=float(rt_cfg.get("min_depth_m", 0.1)),
-                max_depth_m=float(rt_cfg.get("max_depth_m", 10.0)),
+                min_depth_m=min_d,
+                max_depth_m=max_d,
                 timeout_ms=int(rt_cfg.get("timeout_ms", 2000)),
             )
             self.sig_log.emit(
-                f"[实时] 相机类型：RealSense | "
-                f"{rt_cfg.get('width', 640)}x{rt_cfg.get('height', 480)} "
-                f"@ {rt_cfg.get('fps', 30)}fps"
+                f"[实时] 相机类型：RealSense | {cam_w}x{cam_h} @ {cam_fps}fps | "
+                f"深度范围 {min_d}~{max_d}m"
             )
             return cam
 
@@ -824,7 +835,18 @@ class AppController(QObject):
             return
 
         self._ensure_pipelines()
-        self._rt_pipeline = RealtimePipeline(cam, self._full_pipeline)
+        rt_cfg = self._config.get("realtime", {})
+        voxel_size   = float(rt_cfg.get("voxel_size", 0.05))
+        max_proc_pts = int(rt_cfg.get("max_points_for_process", 20000))
+        max_disp_pts = int(rt_cfg.get("max_points_for_display", 30000))
+        proc_interval = int(rt_cfg.get("process_interval", 1))
+
+        self._rt_pipeline = LightweightRealtimePipeline(
+            camera=cam,
+            voxel_size=voxel_size,
+            max_points_for_proc=max_proc_pts,
+            process_interval=proc_interval,
+        )
         try:
             self._rt_pipeline.start()
         except Exception as e:
@@ -832,8 +854,7 @@ class AppController(QObject):
             self._rt_pipeline = None
             return
 
-        rt_cfg = self._config.get("realtime", {})
-        raw_fps = float(rt_cfg.get("raw_fps", 5.0))
+        raw_fps = float(rt_cfg.get("raw_fps", 10.0))
 
         self.state.runtime_mode = "realtime"
         self.state.realtime_running = True
@@ -903,19 +924,34 @@ class AppController(QObject):
     def _on_realtime_result(self, rt_res, fps: float) -> None:
         frame = rt_res.frame
         xyz = np.asarray(frame.points_xyz, dtype=np.float32)
+
+        # ── 更新基础字段（向后兼容）──────────────────────────────────
         self.state.realtime_fps = float(fps)
         self.state.realtime_points = int(xyz.shape[0])
         self.state.current_file = frame.source_path
         self.state.loaded_pcd = numpy_xyz_to_pointcloud(xyz)
-        # 更新障碍物数量（来自 LightweightRealtimePipeline 的聚类结果）
+
+        # ── 更新性能新增字段 ──────────────────────────────────────────
+        # camera_fps / process_fps 由新版 pipeline 携带在 RealtimeResult 中
+        cam_fps  = getattr(rt_res, "camera_fps",  0.0)
+        proc_fps = getattr(rt_res, "process_fps", 0.0)
+        raw_pts  = getattr(rt_res, "raw_points",  int(xyz.shape[0]))
+        proc_pts = getattr(rt_res, "proc_points", 0)
+        proc_ms  = getattr(rt_res, "proc_elapsed", 0.0) * 1000.0  # 秒→毫秒
+
+        self.state.realtime_camera_fps      = float(cam_fps) if cam_fps > 0 else float(fps)
+        self.state.realtime_process_fps     = float(proc_fps)
+        self.state.realtime_raw_points      = int(raw_pts)
+        self.state.realtime_proc_points     = int(proc_pts)
+        self.state.realtime_proc_elapsed_ms = float(proc_ms)
+
+        # ── 障碍物数量 ────────────────────────────────────────────────
         clusters = getattr(rt_res, "clusters", None)
         self.state.realtime_obstacles = len(clusters) if clusters is not None else 0
 
+        # ── 触发 Open3D 更新 ─────────────────────────────────────────
         if rt_res.scene is not None:
-            # 只更新 last_scene，不拆散 last_det/last_seg；
-            # 离线"融合显示"走 last_scene 分支，不会因类型不匹配而出错
             self.state.last_scene = rt_res.scene
-            # 通知 main_window 刷新实时 Open3D 窗口
             self.sig_realtime_frame.emit(rt_res.scene)
 
         self._emit_state()

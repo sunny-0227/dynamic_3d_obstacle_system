@@ -20,16 +20,16 @@ Intel RealSense 深度相机接入模块
   - 若同时插多台相机，可通过 serial_number 参数指定设备序列号
 
 使用示例：
-  cam = RealSenseCamera(width=640, height=480, fps=30)
+  cam = RealSenseCamera(width=424, height=240, fps=30)
   cam.start()
   while cam.is_running:
       frame = cam.get_next_frame()
-      process(frame.points_xyz)   # (N,3) float32
+      process(frame.points_xyz)   # (N,3) float32，约 5万点
   cam.stop()
 
 替换 MockCamera 示例（AppController.start_realtime_mode 中）：
   # cam = MockCamera(stream_dir)
-  cam = RealSenseCamera(width=640, height=480, fps=15)
+  cam = RealSenseCamera(width=424, height=240, fps=30)
 """
 
 import numpy as np
@@ -65,12 +65,14 @@ def _import_rs2():
 # -------------------------------------------------------------------
 # 默认配置常量
 # -------------------------------------------------------------------
-_DEFAULT_WIDTH: int = 640          # 深度流分辨率宽
-_DEFAULT_HEIGHT: int = 480         # 深度流分辨率高
+# 分辨率从 640x480 改为 424x240：点数从 ~21万降到 ~5万，处理速度大幅提升
+# D435 支持 424x240 @ 6/15/30/60/90fps，性能演示时推荐 424x240 @ 30fps
+_DEFAULT_WIDTH: int = 424          # 深度流分辨率宽
+_DEFAULT_HEIGHT: int = 240         # 深度流分辨率高
 _DEFAULT_FPS: int = 30             # 流帧率（相机硬件支持值：6/15/30/60/90）
 _DEFAULT_TIMEOUT_MS: int = 5000    # wait_for_frames 超时（毫秒）
-_MIN_DEPTH_M: float = 0.1          # 最小有效深度（米），过滤过近噪点
-_MAX_DEPTH_M: float = 10.0         # 最大有效深度（米），过滤远处噪点
+_MIN_DEPTH_M: float = 0.3          # 最小有效深度（米），过滤过近噪点（0.3m 以内噪声大）
+_MAX_DEPTH_M: float = 4.0          # 最大有效深度（米），超出后精度下降且点数增多
 
 
 class RealSenseCamera(IPointCloudCamera):

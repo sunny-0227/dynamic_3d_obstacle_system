@@ -147,23 +147,34 @@ realtime:
   mock_loop: true
 
   # ---------- RealSense Camera 专属 ----------
-  # 深度流分辨率（常用：424x240 / 480x270 / 640x480 / 848x480 / 1280x720）
-  width: 640
-  height: 480
-  # 深度流帧率（D435 支持：6/15/30/60/90，建议演示用 15 或 30）
+  # 深度流分辨率：424x240 点数约 5万，640x480 约 21万；建议演示用 424x240
+  width: 424
+  height: 240
+  # 深度流帧率（D435 支持：6/15/30/60/90，建议演示用 30）
   fps: 30
   # 设备序列号：多台相机时指定连接哪台；留空则连接第一台已识别设备
   serial_number: ""
   # 是否对齐深度帧到彩色帧坐标系（开启时需同时开启彩色流，会增加 CPU/带宽开销）
   align_to_color: false
   # 有效深度范围（米）：过滤过近噪点和超出量程的远处点
-  min_depth_m: 0.1
-  max_depth_m: 10.0
+  min_depth_m: 0.3
+  max_depth_m: 4.0
   # wait_for_frames 超时（毫秒）；演示时建议 1000-2000，降低断开时的等待卡顿
   timeout_ms: 2000
 
   # ---------- 帧率控制（对 Mock 和 RealSense 均生效）----------
   # raw_fps：预览模式（仅读帧不分析）的目标帧率
-  raw_fps: 5.0
-  # analysis_fps：实时分析模式的目标帧率（算法耗时较长时实际 fps 由算法决定）
-  analysis_fps: 3.0
+  raw_fps: 10.0
+  # analysis_fps：实时分析模式的目标调度帧率（算法若超时则以实际耗时为准）
+  analysis_fps: 5.0
+
+  # ---------- 性能优化参数 ----------
+  # voxel_size：点云 voxel 下采样体素大小（米）；0 表示不下采样
+  # 424x240@4m 有效点约 5万，voxel=0.05 后约 8000~15000 点，处理速度大幅提升
+  voxel_size: 0.05
+  # max_points_for_process：下采样后超过此点数时随机再次抽稀
+  max_points_for_process: 20000
+  # max_points_for_display：送入 Open3D 渲染的最大点数（超出则随机抽稀）
+  max_points_for_display: 30000
+  # process_interval：每隔几帧执行一次算法分析（1=每帧，3=每3帧，提升流畅度）
+  process_interval: 1

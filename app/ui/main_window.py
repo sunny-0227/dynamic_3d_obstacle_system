@@ -547,6 +547,12 @@ class MainWindow(QMainWindow):
             source=str(state.realtime_source),
             running=bool(state.realtime_running),
             analyzing=bool(state.realtime_analyzing),
+            # 性能优化新增字段
+            camera_fps=float(getattr(state, "realtime_camera_fps", 0.0)),
+            process_fps=float(getattr(state, "realtime_process_fps", 0.0)),
+            raw_points=int(getattr(state, "realtime_raw_points", 0)),
+            proc_points=int(getattr(state, "realtime_proc_points", 0)),
+            proc_elapsed_ms=float(getattr(state, "realtime_proc_elapsed_ms", 0.0)),
         )
 
         # ── 底部状态栏 ─────────────────────────────────────────────
