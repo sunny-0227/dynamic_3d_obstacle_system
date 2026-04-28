@@ -1,10 +1,8 @@
 """
-OpenPCDet 检测器封装（里程碑 3）
+OpenPCDet 检测器封装（降级/备用模式）
 
-目标：
-  1) 提供与 BaseDetector 一致的统一检测接口
-  2) 优先在此封装 OpenPCDet 真实推理（可后续替换）
-  3) 当前阶段若无法稳定接入 OpenPCDet，则提供“占位实现”，仍输出标准 DetectionBox，保证 GUI 可运行
+当 OpenPCDetJsonDetector（WSL 真实推理）未启用时，由此类提供模拟检测结果，
+输出标准 DetectionBox 格式，保证 pipeline 正常运行。
 """
 
 from __future__ import annotations
@@ -21,7 +19,6 @@ from app.utils.logger import get_logger
 logger = get_logger("core.detector.openpcdet_detector")
 
 
-# 里程碑 3 默认类（与里程碑 1 伪检测器保持一致）
 DEFAULT_CLASS_NAMES = ["car", "pedestrian", "cyclist"]
 DEFAULT_CLASS_SIZES = {
     "car": (4.5, 2.0, 1.6),  # [l, w, h]
@@ -31,17 +28,7 @@ DEFAULT_CLASS_SIZES = {
 
 
 class OpenPCDetDetector(BaseDetector):
-    """
-    OpenPCDet 检测器封装类。
-
-    参数（均为可选，保证当前阶段可稳定运行）：
-        model_cfg_path: OpenPCDet 的模型配置文件路径（yaml）
-        checkpoint_path: 模型权重 checkpoint 路径（.pth）
-        device: 推理设备，如 "cpu" / "cuda"
-        score_threshold: 置信度过滤阈值（占位实现也会使用）
-        num_boxes_fake: 占位实现时生成的检测框数量（后续真实推理会替换）
-        class_names: 类别名称列表（占位实现使用）
-    """
+    """OpenPCDet 检测器封装类（enable_wsl=false 时的降级检测器）。"""
 
     def __init__(
         self,
@@ -64,29 +51,17 @@ class OpenPCDetDetector(BaseDetector):
         self._try_init_openpcdet()
 
     def _try_init_openpcdet(self) -> None:
-        """
-        尝试导入 OpenPCDet 组件并初始化真实推理所需对象。
-
-        当前里程碑策略：
-          - 若依赖缺失：进入占位实现
-          - 若依赖齐全：仍不保证真实推理可稳定跑通（复杂度较高），因此默认也会 fallback 到占位
-        """
+        """尝试导入 OpenPCDet 依赖，不可用时标记 _openpcdet_ready=False。"""
         if self.model_cfg_path is None or self.checkpoint_path is None:
-            logger.warning(
-                "未提供 OpenPCDet 配置/权重，将使用占位检测实现。"
-            )
+            logger.warning("未提供 OpenPCDet 配置/权重，将使用模拟检测。")
             self._openpcdet_ready = False
             return
 
         try:
-            # OpenPCDet 入口通常是 pcdet 包
             import torch  # noqa: F401
             import pcdet  # noqa: F401
-
-            # 真实的 build_network / dataset / DemoDataset 初始化较复杂，
-            # 当前阶段仅标记已具备依赖，真正推理替换位置见 _detect_openpcdet()
             self._openpcdet_ready = True
-            logger.info("检测到 OpenPCDet 依赖可导入，但当前仍使用占位 fallback 逻辑。")
+            logger.info("检测到 OpenPCDet 依赖可导入，当前仍使用模拟检测（fallback）。")
         except Exception as exc:
             logger.warning(
                 "OpenPCDet 依赖不可用，将使用占位检测实现：%s",

@@ -1,7 +1,8 @@
 """
-伪语义分割模块（第一阶段占位实现）
-不接真实模型，对点云中每个点随机分配语义类别，并根据类别着色。
-着色结果直接写入 Open3D PointCloud 的 colors 属性。
+模拟语义分割模块（pipeline 降级 / 测试用途）
+
+不接真实模型，按 Z 轴高度粗略分层并对其余点随机分配类别，
+着色结果写入 Open3D PointCloud 的 colors 属性。
 """
 
 from typing import Dict, List, Tuple

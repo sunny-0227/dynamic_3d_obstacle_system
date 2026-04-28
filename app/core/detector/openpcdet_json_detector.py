@@ -1,20 +1,12 @@
-from __future__ import annotations
-
 """
 OpenPCDetJsonDetector — 通过 WSL2 subprocess 调用 infer_to_json.py 的检测器
 
-WSL 命令构造策略（解决 conda: command not found）：
-  非交互式 bash -lc 不会自动加载 conda 初始化脚本，
-  因此显式 source conda.sh 来激活 conda，再 activate 环境。
-
-  优先尝试 ~/miniconda3，若不存在则尝试 ~/anaconda3：
-    source ~/miniconda3/etc/profile.d/conda.sh && \
-    conda activate <env> && \
-    python infer_to_json.py ...
-
-  最终 WSL 调用形式：
-    wsl bash -lc "source ~/miniconda3/etc/profile.d/conda.sh && conda activate openpcdet_py310 && python ..."
+非交互式 bash -lc 不自动加载 conda 初始化脚本，因此显式 source conda.sh：
+  source ~/miniconda3/etc/profile.d/conda.sh && conda activate <env> && cd <tools_dir> && python infer_to_json.py ...
+优先尝试 ~/miniconda3，其次 ~/anaconda3、~/miniforge3。
 """
+
+from __future__ import annotations
 
 import json
 import subprocess

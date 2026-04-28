@@ -1,36 +1,11 @@
-from __future__ import annotations
-
 """
 Intel RealSense 深度相机接入模块
 
-功能：
-  - 通过 pyrealsense2 驱动 Intel RealSense 系列深度相机（D435 / D435i / D415 / L515 等）
-  - 实现 IPointCloudCamera 统一接口，可与 MockCamera 无缝替换
-  - 将深度帧通过相机内参去投影（de-projection）转为三维点云
-  - 支持可选的对齐（Align depth→color），过滤空洞，裁剪距离范围
-  - 输出与 MockCamera 完全一致的 CameraFrame 数据结构
-
-依赖：
-  pip install pyrealsense2   # Intel 官方 Python 绑定，支持 Windows / Linux / macOS
-  pip install numpy
-
-硬件连接注意事项：
-  - 请使用 USB 3.0 端口，避免 USB 2.0 带宽不足导致帧率下降
-  - Windows 上首次连接需安装 Intel RealSense SDK 2.0 驱动
-  - 若同时插多台相机，可通过 serial_number 参数指定设备序列号
-
-使用示例：
-  cam = RealSenseCamera(width=424, height=240, fps=30)
-  cam.start()
-  while cam.is_running:
-      frame = cam.get_next_frame()
-      process(frame.points_xyz)   # (N,3) float32，约 5万点
-  cam.stop()
-
-替换 MockCamera 示例（AppController.start_realtime_mode 中）：
-  # cam = MockCamera(stream_dir)
-  cam = RealSenseCamera(width=424, height=240, fps=30)
+实现 IPointCloudCamera 统一接口，将深度帧通过内参去投影为三维点云，
+可与 MockCamera 无缝替换。依赖 pyrealsense2（懒导入，未安装不影响离线模式）。
 """
+
+from __future__ import annotations
 
 import numpy as np
 
@@ -44,13 +19,7 @@ logger = get_logger("realtime.realsense_camera")
 # pyrealsense2 懒导入：没有安装时仅在 start() 阶段报错，不影响离线模式启动
 # -------------------------------------------------------------------
 def _import_rs2():
-    """
-    延迟导入 pyrealsense2。
-
-    好处：
-      - 未插相机 / 未安装 SDK 时，离线模式仍可正常启动
-      - 避免模块加载阶段因缺少驱动而整体崩溃
-    """
+    """延迟导入 pyrealsense2，避免未安装 SDK 时影响离线模式启动。"""
     try:
         import pyrealsense2 as rs  # noqa: F401
         return rs

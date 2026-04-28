@@ -1,12 +1,4 @@
-"""
-检测 pipeline（里程碑 3）
-
-职责：
-  - 统一入口 run(points_or_path)，支持 numpy 点云数组 或点云文件路径
-  - 调用 detector 执行检测
-  - 调用 box_converter 做后处理与格式标准化
-  - 返回统一的 List[DetectionBox]
-"""
+"""检测 pipeline：调用 BaseDetector 并通过 BoxConverter 标准化输出。"""
 
 from __future__ import annotations
 

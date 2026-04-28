@@ -1,43 +1,13 @@
-from __future__ import annotations
-
 """
 实时轻量语义分割模块
 
-两层职责：
-  1. LightweightSegmentor（核心算法）
-       - RANSAC 平面拟合：将点云分为「地面」与「非地面」两大类
-       - 在非地面点中进一步识别「障碍物候选」（高度/密度过滤）
-       - 输出 SegmentationResult（labels + id_to_name + id_to_color）
-       - 输出带颜色的 Open3D PointCloud（可选）
+算法：RANSAC 平面拟合地面分割 + 高度/密度过滤识别障碍物候选。
+不依赖深度学习模型、GPU、PCL，纯 numpy 实现。
 
-  2. RealtimeSegmentor（流水线适配层）
-       - 遵循项目既有 SegmentPipeline 调用约定
-       - 保留旧版「复用离线 SegmentPipeline」接口不变，新增「轻量几何模式」
-       - 外层 LightweightRealtimePipeline 直接用 LightweightSegmentor；
-         旧版 RealtimePipeline 用 RealtimeSegmentor 包装 SegmentPipeline
-
-语义类别编码（固定，供聚类器和可视化共用）：
-  0 — background（背景 / 未分类）灰色
-  1 — ground     （地面）          棕色
-  2 — obstacle   （障碍物候选）    红色
-  3 — noise      （孤立噪点）      深灰
-
-算法原理：
-  RANSAC 平面拟合：
-    随机取 3 点确定一个平面，统计距平面法向距离 < threshold 的内点数，
-    迭代 N 次取内点最多的平面作为地面。
-    复杂度：O(iter × N)，典型值 iter=50, N~130k，约 0.5ms（纯 numpy）。
-
-  非地面过滤：
-    高度 > (ground_z + obstacle_min_height) 且 < (ground_z + obstacle_max_height)
-    的点视为「障碍物候选」，其余视为「背景」（可能是天花板/远墙/高处噪点）。
-
-不依赖：
-  - 深度学习模型
-  - GPU
-  - PCL（纯 numpy 实现）
-  - open3d 可选（仅着色点云生成时用）
+语义类别：0=背景, 1=地面, 2=障碍物候选, 3=孤立噪点
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple

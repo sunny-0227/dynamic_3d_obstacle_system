@@ -1,7 +1,8 @@
 """
-伪3D目标检测模块（第一阶段占位实现）
-不接真实模型，根据输入点云的空间范围随机生成 2~3 个 3D 检测框。
-每个检测框用 open3d.geometry.OrientedBoundingBox 表示，并附带类别和置信度。
+模拟 3D 目标检测模块（pipeline 降级 / 测试用途）
+
+不接真实模型，根据输入点云的空间范围随机生成 2~3 个 3D 检测框，
+每个检测框用 open3d.geometry.OrientedBoundingBox 表示。
 """
 
 import random

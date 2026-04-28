@@ -1,14 +1,11 @@
 """
-UI 控制器（里程碑 6）
-
-主界面在「一键分析」等按钮上采用更严格的前置条件（由主窗口 set_action_buttons_state 控制）；
-控制器内仍保留单文件自动加载逻辑，供非 GUI 调用或后续放宽策略时使用。
+UI 控制器
 
 职责：
-  - 管理应用状态（当前文件、点云、nuScenes loader、最近结果）
-  - 在后台线程执行耗时任务（加载点云/连接数据集/检测/分割/一键分析）
-  - 在主线程触发 Open3D 显示（渲染仍会阻塞，但计算尽量异步）
-  - 统一异常提示与日志输出
+  - 集中管理应用状态（AppState）
+  - 在后台线程执行耗时任务（点云加载/检测/分割/一键分析）
+  - 驱动实时相机感知线程（_RealtimeThread）
+  - 统一日志输出与异常提示
 """
 
 from __future__ import annotations
@@ -46,10 +43,7 @@ logger = get_logger("ui.controller")
 
 
 class _TaskThread(QThread):
-    """
-    一次性后台任务：重写 run()，不在子线程里跑 exec()。
-    避免 moveToThread+QThread 默认事件循环与主线程 wait()/quit() 在 Windows 上偶发死锁。
-    """
+    """一次性后台任务线程，避免 Windows 上 exec()+wait() 偶发死锁。"""
 
     sig_done = pyqtSignal(object)
     sig_error = pyqtSignal(str, str)
@@ -109,7 +103,7 @@ class _RealtimeThread(QThread):
 
 @dataclass
 class AppState:
-    """workflow：离线流程；runtime_mode：离线/实时模式切换。"""
+    """应用全局状态，由 AppController 持有并通过 sig_state 广播给 MainWindow。"""
 
     runtime_mode: RuntimeMode = "offline"
     workflow: WorkflowMode = "none"
@@ -126,26 +120,25 @@ class AppState:
     realtime_stream_dir: Optional[Path] = None
     realtime_running: bool = False
     realtime_analyzing: bool = False
-    realtime_fps: float = 0.0          # 相机采集 FPS（向后兼容）
-    realtime_camera_fps: float = 0.0   # 相机采集 FPS（新）
+    realtime_fps: float = 0.0           # 向后兼容，等于 realtime_camera_fps
+    realtime_camera_fps: float = 0.0   # 相机采集 FPS
     realtime_process_fps: float = 0.0  # 算法处理 FPS
-    realtime_points: int = 0           # 相机原始点数
-    realtime_raw_points: int = 0       # 相机原始点数（新）
+    realtime_points: int = 0           # 向后兼容，等于 realtime_raw_points
+    realtime_raw_points: int = 0       # 原始点数
     realtime_proc_points: int = 0      # 下采样后点数
-    realtime_obstacles: int = 0        # 当前帧聚类检测到的障碍物数量
+    realtime_obstacles: int = 0        # 当前帧障碍物数量
     realtime_proc_elapsed_ms: float = 0.0  # 本帧算法耗时（ms）
     realtime_source: str = "Mock"
 
 
 class AppController(QObject):
-    sig_log = pyqtSignal(str)
-    sig_status = pyqtSignal(str)
-    sig_error = pyqtSignal(str, str)  # title, message
-    sig_state = pyqtSignal(object)  # AppState
-    sig_busy = pyqtSignal(bool)
-    sig_request_render = pyqtSignal(str)  # "raw" / "seg" / "fusion"
-    # 实时分析帧结果：携带 FusedScene，驱动实时 Open3D 窗口刷新
-    sig_realtime_frame = pyqtSignal(object)  # FusedScene
+    sig_log            = pyqtSignal(str)
+    sig_status         = pyqtSignal(str)
+    sig_error          = pyqtSignal(str, str)   # (title, message)
+    sig_state          = pyqtSignal(object)     # AppState
+    sig_busy           = pyqtSignal(bool)
+    sig_request_render = pyqtSignal(str)        # "raw" / "seg" / "fusion"
+    sig_realtime_frame = pyqtSignal(object)     # FusedScene，驱动实时 Open3D 窗口
 
     def __init__(self, config: dict):
         super().__init__()
@@ -257,11 +250,9 @@ class AppController(QObject):
         if self._thread is not None:
             t = self._thread
             self._thread = None
-            # 须在槽内 wait 后再 deleteLater：避免 finished 早于 sig_done 导致对象被提前释放
             if t.isRunning() and not t.wait(5000):
-                logger.warning("后台线程 5s 内未结束，若界面异常可重启程序")
+                logger.warning("后台线程 5s 内未结束，若界面异常请重启程序")
             t.deleteLater()
-        # 先解除 busy，再根据最新状态刷新按钮（避免 restore 覆盖 on_done 里启用的控件）
         self.sig_busy.emit(False)
         self._emit_state()
 
@@ -338,8 +329,8 @@ class AppController(QObject):
                     logger.warning(warn_msg)
                     self.sig_log.emit(f"⚠ {warn_msg}")
                 else:
-                    logger.info("[Controller] 检测器：OpenPCDetDetector（模拟检测 / 占位模式）")
-                    self.sig_log.emit("[检测器] 使用占位模拟检测（enable_wsl=false）")
+                    logger.info("[Controller] 检测器：OpenPCDetDetector（模拟检测模式）")
+                    self.sig_log.emit("[检测器] 使用模拟检测（enable_wsl=false）")
 
                 openpcdet_cfg = det_cfg.get("openpcdet", {})
 

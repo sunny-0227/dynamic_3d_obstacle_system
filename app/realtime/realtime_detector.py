@@ -1,45 +1,12 @@
-from __future__ import annotations
-
 """
 实时轻量障碍物检测模块
 
-两层职责：
-  1. LightweightDetector（核心算法）
-       - 接受「障碍物候选点云」（来自 LightweightSegmentor 的 SEG_OBSTACLE 点）
-       - 使用 DBSCAN 聚类，将连续点云分割为独立障碍物实例
-       - 为每个有效聚类生成 3D 边界框（AABB 轴对齐或近似 OBB）
-       - 过滤过小/过大聚类（噪点或墙体）
-       - 返回标准 DetectionBox 列表 + Open3D OBB 列表（可直接渲染）
-
-  2. RealtimeDetector（流水线适配层）
-       - 保留旧版「复用离线 DetectPipeline」接口不变
-       - 新增「轻量几何模式」供 LightweightRealtimePipeline 调用
-
-算法原理：
-  DBSCAN（Density-Based Spatial Clustering of Applications with Noise）：
-    - 核心参数：epsilon（邻域半径）、min_samples（核心点最小邻点数）
-    - 优点：不需要预设簇数；能识别任意形状的聚类；自动标记离群噪点为 -1
-    - 复杂度：O(N log N)（KD-Tree 加速），典型 3D 点云 (~5k 障碍物点) < 10ms
-
-  边界框生成：
-    方案 A（AABB，默认）：
-      各轴 min/max → center + half-extent → DetectionBox
-      优点：极快（< 0.1ms/框），缺点：不含旋转角 yaw
-    方案 B（PCA-OBB）：
-      对各簇点做 PCA，第一主成分方向为 yaw → 更紧凑的有向边界框
-      优点：贴合细长障碍物；缺点：约 1ms/框
-
-  类别推断（简单规则）：
-    高 h > 1.5m, 面积 < 2m²  → "person"（行人）
-    高 h > 1.2m, 面积 > 1m²  → "car"
-    其余                      → "obstacle"
-
-不依赖：
-  - 深度学习模型 / GPU
-  - PCL
-  - open3d（仅 OBB 可视化生成时用，可选）
-  - scikit-learn（DBSCAN 优先用 scipy KD-Tree 自实现，若不可用降级）
+算法：DBSCAN 聚类（KD-Tree 加速）→ AABB / PCA-OBB 边界框生成。
+类别规则推断：car / person / obstacle。
+不依赖深度学习模型、GPU、PCL。
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List, Optional, Tuple

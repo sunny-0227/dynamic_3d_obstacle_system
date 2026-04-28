@@ -1,23 +1,9 @@
 """
-场景渲染器（里程碑 5 / 里程碑 7 扩展）
+场景渲染器：在 Open3D 窗口中同时显示点云（原始/分割彩色）和检测框。
 
-在同一个 Open3D 视窗中同时显示：
-  - 点云（原始 or 彩色分割结果）
-  - 检测框（OrientedBoundingBox）
-
-提供两种渲染模式：
-  1. 阻塞式 render(scene)
-       适合离线一次性显示；调用后窗口打开，阻塞直到用户关闭。
-
-  2. 非阻塞持久化窗口（实时模式）
-       open_realtime_window()  — 创建并打开窗口（非阻塞）
-       update(scene)           — 每帧调用，刷新点云 + 边界框（非阻塞）
-       tick()                  — 在 GUI 主线程定时器里调用，驱动 Open3D 事件循环
-       close()                 — 关闭并销毁窗口
-
-设计目标：
-  - 与 GUI 解耦：不嵌入 PyQt5
-  - 可复用：可直接渲染 FusedScene
+两种渲染模式：
+  - render(scene)          — 阻塞式，离线一次性显示
+  - open_realtime_window() + update(scene) + tick() + close()  — 非阻塞实时渲染
 """
 
 from __future__ import annotations
