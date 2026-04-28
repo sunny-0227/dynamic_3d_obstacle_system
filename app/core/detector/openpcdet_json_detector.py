@@ -265,9 +265,11 @@ class OpenPCDetJsonDetector(BaseDetector):
             try:
                 result = subprocess.run(
                     probe_cmd,
-                    capture_output=True, text=True, timeout=10,
+                    capture_output=True, text=True,
+                    encoding="utf-8", errors="replace",
+                    timeout=10,
                 )
-                out = (result.stdout or "").strip()  # stdout 可能为 None，先做 None 检查
+                out = (result.stdout or "").strip()
                 self._ui_log(f"[OpenPCDet] 探测 {sh} → {out}")
                 if out == "YES":
                     self._resolved_conda_sh = sh
@@ -363,10 +365,14 @@ class OpenPCDetJsonDetector(BaseDetector):
 
         t0 = time.perf_counter()
         try:
+            # encoding="utf-8" + errors="replace"：
+            # WSL 输出为 UTF-8，Windows 默认 gbk 解码会崩（UnicodeDecodeError）
             proc = subprocess.run(
                 full_cmd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=self._timeout_s,
             )
         except FileNotFoundError:
