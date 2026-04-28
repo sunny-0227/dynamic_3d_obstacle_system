@@ -152,10 +152,13 @@ class OfflinePage(QWidget):
 
         # ── nuScenes ─────────────────────────────────────────────
         self._nusc_group = QGroupBox("nuScenes mini")
+        # Minimum 策略：GroupBox 按内容自动撑开高度，不压缩子控件
+        self._nusc_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         nlay = QVBoxLayout(self._nusc_group)
-        nlay.setSpacing(10)
-        nlay.setContentsMargins(14, 18, 14, 14)
+        nlay.setSpacing(12)
+        nlay.setContentsMargins(12, 16, 12, 12)
 
+        # 行1：根目录选择
         row_root = QHBoxLayout()
         row_root.setSpacing(10)
         self._btn_nusc_root = QPushButton("选择根目录")
@@ -171,15 +174,18 @@ class OfflinePage(QWidget):
         row_root.addWidget(self._path_nusc, stretch=1)
         nlay.addLayout(row_root)
 
+        # 行2：加载数据集
         self._btn_nusc_connect = QPushButton("加载数据集")
         self._btn_nusc_connect.setEnabled(False)
-        self._btn_nusc_connect.setMinimumHeight(38)
+        self._btn_nusc_connect.setMinimumHeight(36)
         nlay.addWidget(self._btn_nusc_connect)
 
+        # 行3：导航方式
         row_nav = QHBoxLayout()
         row_nav.setSpacing(10)
         lbl_nav = QLabel("导航方式:")
-        lbl_nav.setFixedWidth(70)
+        lbl_nav.setMinimumWidth(72)
+        lbl_nav.setMinimumHeight(32)
         self._combo_mode = QComboBox()
         self._combo_mode.addItem("全数据集（sample 表顺序）", "global")
         self._combo_mode.addItem("按场景时序链", "scene")
@@ -188,10 +194,12 @@ class OfflinePage(QWidget):
         row_nav.addWidget(self._combo_mode, stretch=1)
         nlay.addLayout(row_nav)
 
+        # 行4：场景选择
         row_scene = QHBoxLayout()
         row_scene.setSpacing(10)
         lbl_scene = QLabel("场景:")
-        lbl_scene.setFixedWidth(70)
+        lbl_scene.setMinimumWidth(72)
+        lbl_scene.setMinimumHeight(32)
         self._combo_scene = QComboBox()
         self._combo_scene.setEnabled(False)
         self._combo_scene.setMinimumHeight(32)
@@ -199,45 +207,51 @@ class OfflinePage(QWidget):
         row_scene.addWidget(self._combo_scene, stretch=1)
         nlay.addLayout(row_scene)
 
+        # 行5：帧索引 + 翻页按钮（统一 minimumHeight，避免高度不一致导致重叠）
         row_frame = QHBoxLayout()
         row_frame.setSpacing(10)
         lbl_frame = QLabel("帧索引:")
-        lbl_frame.setFixedWidth(70)
+        lbl_frame.setMinimumWidth(72)
+        lbl_frame.setMinimumHeight(34)
         self._spin_frame = QSpinBox()
         self._spin_frame.setMinimum(0)
         self._spin_frame.setMaximum(0)
         self._spin_frame.setEnabled(False)
-        self._spin_frame.setMinimumHeight(32)
-        self._spin_frame.setMinimumWidth(70)
+        self._spin_frame.setMinimumHeight(34)
+        self._spin_frame.setMaximumWidth(100)
         self._btn_prev = QPushButton("◀")
         self._btn_next = QPushButton("▶")
         self._btn_prev.setEnabled(False)
         self._btn_next.setEnabled(False)
         self._btn_prev.setFixedWidth(44)
-        self._btn_prev.setFixedHeight(34)
+        self._btn_prev.setMinimumHeight(34)
         self._btn_next.setFixedWidth(44)
-        self._btn_next.setFixedHeight(34)
+        self._btn_next.setMinimumHeight(34)
         row_frame.addWidget(lbl_frame)
         row_frame.addWidget(self._spin_frame)
-        row_frame.addStretch(1)           # 【拉伸】帧号和翻页按钮之间留白
+        row_frame.addStretch(1)
         row_frame.addWidget(self._btn_prev)
         row_frame.addWidget(self._btn_next)
         nlay.addLayout(row_frame)
 
+        # 行6：加载当前帧
         self._btn_load_frame = QPushButton("加载当前帧点云")
         self._btn_load_frame.setEnabled(False)
-        self._btn_load_frame.setMinimumHeight(38)
+        self._btn_load_frame.setMinimumHeight(36)
         nlay.addWidget(self._btn_load_frame)
 
+        # 元信息提示行
         self._lbl_nusc_meta = QLabel("请先选择根目录并加载数据集")
         self._lbl_nusc_meta.setObjectName("metaLabel")
         self._lbl_nusc_meta.setWordWrap(True)
+        self._lbl_nusc_meta.setMinimumHeight(32)
         nlay.addWidget(self._lbl_nusc_meta)
 
         col.addWidget(self._nusc_group)
         self._nusc_group.setEnabled(False)
 
-        col.addStretch(1)                 # 【拉伸】底部留白，控件不向下堆积
+        # 底部 stretch：允许左列在窗口高度充足时自然撑开，高度不足时不压缩 nusc_group
+        col.addStretch(1)
         return col
 
     def _build_right_col(self) -> QVBoxLayout:
