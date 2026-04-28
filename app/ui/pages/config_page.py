@@ -274,11 +274,23 @@ class ConfigPage(QWidget):
         self._le_tmp_dir.setText(str(wsl_cfg.get("tmp_dir", "")))
 
         rt_cfg = self._config.get("realtime", {})
-        self._spin_rs_width.setValue(int(rt_cfg.get("width", 640)))
-        self._spin_rs_height.setValue(int(rt_cfg.get("height", 480)))
-        self._spin_rs_fps.setValue(int(rt_cfg.get("fps", 30)))
-        self._dspin_min_depth.setValue(float(rt_cfg.get("min_depth_m", 0.1)))
-        self._dspin_max_depth.setValue(float(rt_cfg.get("max_depth_m", 10.0)))
+        # 兼容新键名（camera_width/camera_height/camera_fps/min_depth/max_depth）
+        # 和旧键名（width/height/fps/min_depth_m/max_depth_m），新键名优先
+        self._spin_rs_width.setValue(
+            int(rt_cfg.get("camera_width", rt_cfg.get("width", 424)))
+        )
+        self._spin_rs_height.setValue(
+            int(rt_cfg.get("camera_height", rt_cfg.get("height", 240)))
+        )
+        self._spin_rs_fps.setValue(
+            int(rt_cfg.get("camera_fps", rt_cfg.get("fps", 30)))
+        )
+        self._dspin_min_depth.setValue(
+            float(rt_cfg.get("min_depth", rt_cfg.get("min_depth_m", 0.3)))
+        )
+        self._dspin_max_depth.setValue(
+            float(rt_cfg.get("max_depth", rt_cfg.get("max_depth_m", 4.0)))
+        )
 
         seg_cfg = self._config.get("realtime_segmentor", {})
         self._dspin_ransac_thresh.setValue(float(seg_cfg.get("ransac_dist_threshold", 0.2)))
@@ -319,11 +331,17 @@ class ConfigPage(QWidget):
             if "realtime" not in data:
                 data["realtime"] = {}
             rt = data["realtime"]
-            rt["width"]       = self._spin_rs_width.value()
-            rt["height"]      = self._spin_rs_height.value()
-            rt["fps"]         = self._spin_rs_fps.value()
-            rt["min_depth_m"] = round(self._dspin_min_depth.value(), 3)
-            rt["max_depth_m"] = round(self._dspin_max_depth.value(), 3)
+            # 同时写新旧两套键名，确保 controller._build_camera 和旧代码均能读到
+            rt["width"]        = self._spin_rs_width.value()
+            rt["height"]       = self._spin_rs_height.value()
+            rt["fps"]          = self._spin_rs_fps.value()
+            rt["camera_width"] = self._spin_rs_width.value()
+            rt["camera_height"]= self._spin_rs_height.value()
+            rt["camera_fps"]   = self._spin_rs_fps.value()
+            rt["min_depth_m"]  = round(self._dspin_min_depth.value(), 3)
+            rt["max_depth_m"]  = round(self._dspin_max_depth.value(), 3)
+            rt["min_depth"]    = round(self._dspin_min_depth.value(), 3)
+            rt["max_depth"]    = round(self._dspin_max_depth.value(), 3)
 
             # --- 轻量分割参数 ---
             if "realtime_segmentor" not in data:
