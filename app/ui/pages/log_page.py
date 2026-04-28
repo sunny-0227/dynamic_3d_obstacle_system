@@ -47,8 +47,9 @@ class LogPage(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 16, 20, 16)
-        root.setSpacing(12)
+        # 【间距优化】外边距 28 左右、24 上下；行间距 16px
+        root.setContentsMargins(28, 24, 28, 24)
+        root.setSpacing(16)
 
         # 标题行 + 操作按钮
         title_row = QHBoxLayout()
@@ -59,8 +60,10 @@ class LogPage(QWidget):
 
         self._btn_clear  = QPushButton("清空日志")
         self._btn_export = QPushButton("导出日志")
-        self._btn_clear.setMinimumHeight(34)
-        self._btn_export.setMinimumHeight(34)
+        self._btn_clear.setMinimumHeight(36)   # 【间距优化】按钮高度 36px
+        self._btn_export.setMinimumHeight(36)
+        self._btn_clear.setMinimumWidth(90)
+        self._btn_export.setMinimumWidth(90)
         title_row.addWidget(self._btn_clear)
         title_row.addWidget(self._btn_export)
         root.addLayout(title_row)

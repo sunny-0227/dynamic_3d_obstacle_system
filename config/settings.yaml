@@ -133,7 +133,7 @@ realtime:
   # 相机类型：
   #   "mock"        — Mock Camera，从本地目录循环读取 .bin/.pcd，无需硬件（默认）
   #   "realsense"   — Intel RealSense 深度相机，需安装 pyrealsense2 并连接硬件
-  camera_type: "mock"
+  camera_type: "realsense"
 
   # ---------- Mock Camera 专属 ----------
   # mock_fps：Mock Camera 目标帧率（节拍由 _RealtimeThread 的 sleep 控制）

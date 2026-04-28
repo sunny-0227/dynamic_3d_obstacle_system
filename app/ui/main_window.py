@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
         subtitle   = app_cfg.get("subtitle") or DEFAULT_SUBTITLE
 
         self.setWindowTitle(main_title)
-        self.setMinimumSize(1200, 800)
+        self.setMinimumSize(1280, 840)   # 加宽最小窗口，避免布局被压缩
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -134,7 +134,7 @@ class MainWindow(QMainWindow):
     def _build_title_bar(self, main_title: str, subtitle: str) -> QWidget:
         bar = QWidget()
         bar.setObjectName("titleBar")
-        bar.setFixedHeight(72)
+        bar.setFixedHeight(80)           # 【间距优化】标题栏加高，呼吸感更足
         bar.setStyleSheet(
             "QWidget#titleBar {"
             "  background-color: #181825;"
@@ -142,7 +142,7 @@ class MainWindow(QMainWindow):
             "}"
         )
         lay = QHBoxLayout(bar)
-        lay.setContentsMargins(24, 8, 24, 8)
+        lay.setContentsMargins(28, 10, 28, 10)   # 【间距优化】左右边距加大
         lay.setSpacing(0)
 
         left = QVBoxLayout()
@@ -166,24 +166,25 @@ class MainWindow(QMainWindow):
     def _build_nav_bar(self) -> QWidget:
         nav = QWidget()
         nav.setObjectName("navBar")
-        nav.setFixedWidth(180)
+        nav.setFixedWidth(220)           # 【间距优化】导航栏加宽 180→220px，文字不被截断
 
         lay = QVBoxLayout(nav)
-        lay.setContentsMargins(0, 16, 0, 16)
+        lay.setContentsMargins(0, 20, 0, 20)   # 【间距优化】上下边距加大
         lay.setSpacing(0)
 
         # 系统简称
-        lbl_sys = QLabel("导航")
+        lbl_sys = QLabel("  导航")
         lbl_sys.setObjectName("sysTitle")
         lbl_sys.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        lbl_sys.setFixedHeight(32)
         lay.addWidget(lbl_sys)
-        lay.addSpacerItem(QSpacerItem(0, 12, QSizePolicy.Minimum, QSizePolicy.Fixed))
+        lay.addSpacerItem(QSpacerItem(0, 8, QSizePolicy.Minimum, QSizePolicy.Fixed))
 
         # 导航按钮
         for label, icon, idx in _NAV_ITEMS:
-            btn = QPushButton(f" {icon}  {label}")
+            btn = QPushButton(f"  {icon}   {label}")
             btn.setObjectName("navBtn")
-            btn.setFixedHeight(48)
+            btn.setFixedHeight(52)       # 【间距优化】按钮高度 48→52px
             btn.setProperty("active", "false")
             btn.setCheckable(False)
             btn.clicked.connect(partial(self._switch_page, idx))

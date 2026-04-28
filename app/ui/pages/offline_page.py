@@ -9,6 +9,14 @@ from __future__ import annotations
   - nuScenes 根目录、连接、场景/帧导航
   - 执行检测、分割、融合显示、一键分析
   - 当前状态信息展示（路径、帧号、点云大小、检测/分割结果）
+
+布局优化记录：
+  - 页面外边距：28 24（上下）→ 24 28（左右）
+  - 各 GroupBox 间距：spacing=18
+  - GroupBox 内部 spacing=10，内边距 12px
+  - 输入框最小高度 32px，最小宽度 200px
+  - 算法按钮高度提升：38→42，一键分析：48→54
+  - 左右列比例 stretch=1:1，均等分配
 """
 
 from pathlib import Path
@@ -70,38 +78,40 @@ class OfflinePage(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 16, 20, 16)
-        root.setSpacing(14)
+        # 【间距优化】外边距：顶部/底部 24px，左/右 28px；控件间距 18px
+        root.setContentsMargins(28, 24, 28, 24)
+        root.setSpacing(18)
 
         # 页面标题
         title = QLabel("离线点云分析")
         title.setObjectName("pageTitle")
         root.addWidget(title)
 
-        # 分割线
         root.addWidget(self._make_hline())
 
-        # 上半部分：数据源 + 操作，左右并排
+        # 上半部分：数据源 + 操作，左右均等
         content = QHBoxLayout()
-        content.setSpacing(16)
-        content.addLayout(self._build_left_col(), stretch=1)
-        content.addLayout(self._build_right_col(), stretch=1)
-        root.addLayout(content)
+        content.setSpacing(24)           # 【间距优化】左右列间距 24px
+        left_col = self._build_left_col()
+        right_col = self._build_right_col()
+        content.addLayout(left_col, stretch=1)    # 【拉伸】左列 stretch=1
+        content.addLayout(right_col, stretch=1)   # 【拉伸】右列 stretch=1
+        root.addLayout(content, stretch=1)         # 让内容区撑满剩余高度
 
         # 底部状态信息
         root.addWidget(self._make_hline())
         root.addWidget(self._build_status_panel())
-        root.addStretch(1)
 
     def _build_left_col(self) -> QVBoxLayout:
         """左列：数据源选择 + 单文件/nuScenes 控件。"""
         col = QVBoxLayout()
-        col.setSpacing(12)
+        col.setSpacing(18)               # 【间距优化】GroupBox 间距 18px
 
         # ── 数据源选择 ───────────────────────────────────────────
         src_group = QGroupBox("数据源")
         src_lay = QVBoxLayout(src_group)
-        src_lay.setSpacing(8)
+        src_lay.setSpacing(10)           # 【间距优化】内部行间距 10px
+        src_lay.setContentsMargins(14, 18, 14, 14)  # 【间距优化】组内边距
 
         self._radio_single = QRadioButton("单文件点云（.bin / .pcd）")
         self._radio_nusc   = QRadioButton("nuScenes mini 数据集")
@@ -117,78 +127,106 @@ class OfflinePage(QWidget):
         # ── 单文件 ────────────────────────────────────────────────
         self._single_group = QGroupBox("单文件点云")
         sg_lay = QVBoxLayout(self._single_group)
-        sg_lay.setSpacing(8)
+        sg_lay.setSpacing(10)
+        sg_lay.setContentsMargins(14, 18, 14, 14)
 
         row_file = QHBoxLayout()
+        row_file.setSpacing(10)
         self._btn_pick_file = QPushButton("选择文件")
+        self._btn_pick_file.setMinimumHeight(34)  # 【间距优化】按钮最小高度 34px
+        self._btn_pick_file.setFixedWidth(90)
         self._lbl_file_path = QLineEdit()
         self._lbl_file_path.setReadOnly(True)
         self._lbl_file_path.setPlaceholderText("未选择文件")
+        self._lbl_file_path.setMinimumWidth(200)  # 【最小宽度】防止被压缩
+        self._lbl_file_path.setMinimumHeight(34)
         row_file.addWidget(self._btn_pick_file)
         row_file.addWidget(self._lbl_file_path, stretch=1)
         sg_lay.addLayout(row_file)
 
         self._btn_load_file = QPushButton("加载点云")
         self._btn_load_file.setEnabled(False)
-        self._btn_load_file.setMinimumHeight(34)
+        self._btn_load_file.setMinimumHeight(38)  # 【间距优化】加载按钮高 38px
         sg_lay.addWidget(self._btn_load_file)
         col.addWidget(self._single_group)
 
         # ── nuScenes ─────────────────────────────────────────────
         self._nusc_group = QGroupBox("nuScenes mini")
         nlay = QVBoxLayout(self._nusc_group)
-        nlay.setSpacing(8)
+        nlay.setSpacing(10)
+        nlay.setContentsMargins(14, 18, 14, 14)
 
         row_root = QHBoxLayout()
-        self._btn_nusc_root = QPushButton("选择数据集根目录")
+        row_root.setSpacing(10)
+        self._btn_nusc_root = QPushButton("选择根目录")
+        self._btn_nusc_root.setMinimumHeight(34)
+        self._btn_nusc_root.setFixedWidth(100)
         self._path_nusc = QLineEdit()
         self._path_nusc.setReadOnly(True)
-        self._path_nusc.setPlaceholderText("未选择")
+        self._path_nusc.setPlaceholderText("未选择数据集根目录")
         self._path_nusc.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._path_nusc.setMinimumWidth(200)
+        self._path_nusc.setMinimumHeight(34)
         row_root.addWidget(self._btn_nusc_root)
         row_root.addWidget(self._path_nusc, stretch=1)
         nlay.addLayout(row_root)
 
         self._btn_nusc_connect = QPushButton("加载数据集")
         self._btn_nusc_connect.setEnabled(False)
-        self._btn_nusc_connect.setMinimumHeight(34)
+        self._btn_nusc_connect.setMinimumHeight(38)
         nlay.addWidget(self._btn_nusc_connect)
 
         row_nav = QHBoxLayout()
-        row_nav.addWidget(QLabel("导航方式:"))
+        row_nav.setSpacing(10)
+        lbl_nav = QLabel("导航方式:")
+        lbl_nav.setFixedWidth(70)
         self._combo_mode = QComboBox()
         self._combo_mode.addItem("全数据集（sample 表顺序）", "global")
         self._combo_mode.addItem("按场景时序链", "scene")
+        self._combo_mode.setMinimumHeight(32)
+        row_nav.addWidget(lbl_nav)
         row_nav.addWidget(self._combo_mode, stretch=1)
         nlay.addLayout(row_nav)
 
         row_scene = QHBoxLayout()
-        row_scene.addWidget(QLabel("场景:"))
+        row_scene.setSpacing(10)
+        lbl_scene = QLabel("场景:")
+        lbl_scene.setFixedWidth(70)
         self._combo_scene = QComboBox()
         self._combo_scene.setEnabled(False)
+        self._combo_scene.setMinimumHeight(32)
+        row_scene.addWidget(lbl_scene)
         row_scene.addWidget(self._combo_scene, stretch=1)
         nlay.addLayout(row_scene)
 
         row_frame = QHBoxLayout()
-        row_frame.addWidget(QLabel("帧索引:"))
+        row_frame.setSpacing(10)
+        lbl_frame = QLabel("帧索引:")
+        lbl_frame.setFixedWidth(70)
         self._spin_frame = QSpinBox()
         self._spin_frame.setMinimum(0)
         self._spin_frame.setMaximum(0)
         self._spin_frame.setEnabled(False)
-        row_frame.addWidget(self._spin_frame)
+        self._spin_frame.setMinimumHeight(32)
+        self._spin_frame.setMinimumWidth(70)
         self._btn_prev = QPushButton("◀")
         self._btn_next = QPushButton("▶")
         self._btn_prev.setEnabled(False)
         self._btn_next.setEnabled(False)
-        self._btn_prev.setFixedWidth(40)
-        self._btn_next.setFixedWidth(40)
+        self._btn_prev.setFixedWidth(44)
+        self._btn_prev.setFixedHeight(34)
+        self._btn_next.setFixedWidth(44)
+        self._btn_next.setFixedHeight(34)
+        row_frame.addWidget(lbl_frame)
+        row_frame.addWidget(self._spin_frame)
+        row_frame.addStretch(1)           # 【拉伸】帧号和翻页按钮之间留白
         row_frame.addWidget(self._btn_prev)
         row_frame.addWidget(self._btn_next)
         nlay.addLayout(row_frame)
 
         self._btn_load_frame = QPushButton("加载当前帧点云")
         self._btn_load_frame.setEnabled(False)
-        self._btn_load_frame.setMinimumHeight(34)
+        self._btn_load_frame.setMinimumHeight(38)
         nlay.addWidget(self._btn_load_frame)
 
         self._lbl_nusc_meta = QLabel("请先选择根目录并加载数据集")
@@ -197,65 +235,74 @@ class OfflinePage(QWidget):
         nlay.addWidget(self._lbl_nusc_meta)
 
         col.addWidget(self._nusc_group)
-        self._nusc_group.setEnabled(False)  # 默认禁用
+        self._nusc_group.setEnabled(False)
 
+        col.addStretch(1)                 # 【拉伸】底部留白，控件不向下堆积
         return col
 
     def _build_right_col(self) -> QVBoxLayout:
         """右列：算法操作区。"""
         col = QVBoxLayout()
-        col.setSpacing(12)
+        col.setSpacing(18)
 
         alg_group = QGroupBox("算法操作")
         alg_lay = QVBoxLayout(alg_group)
-        alg_lay.setSpacing(10)
+        alg_lay.setSpacing(14)            # 【间距优化】按钮行间距 14px
+        alg_lay.setContentsMargins(16, 20, 16, 16)
 
         hint = QLabel("请先加载点云后再执行以下算法")
         hint.setObjectName("hintLabel")
         hint.setWordWrap(True)
         alg_lay.addWidget(hint)
 
-        self._btn_detect = QPushButton("执行 OpenPCDet 检测")
+        alg_lay.addSpacing(4)             # 【间距优化】提示文字与按钮额外间距
+
+        self._btn_detect  = QPushButton("执行 OpenPCDet 检测")
         self._btn_segment = QPushButton("执行语义分割")
-        self._btn_fusion = QPushButton("融合显示结果")
+        self._btn_fusion  = QPushButton("融合显示结果")
         for b in (self._btn_detect, self._btn_segment, self._btn_fusion):
-            b.setMinimumHeight(38)
+            b.setMinimumHeight(42)        # 【间距优化】操作按钮高 42px
             b.setEnabled(False)
         alg_lay.addWidget(self._btn_detect)
         alg_lay.addWidget(self._btn_segment)
         alg_lay.addWidget(self._btn_fusion)
 
+        alg_lay.addSpacing(6)
         alg_lay.addWidget(self._make_hline())
+        alg_lay.addSpacing(6)
 
         self._btn_full = QPushButton("一键分析（检测 + 分割 + 融合）")
         self._btn_full.setObjectName("btnOneClick")
-        self._btn_full.setMinimumHeight(48)
+        self._btn_full.setMinimumHeight(54)   # 【间距优化】主操作按钮高 54px
         self._btn_full.setEnabled(False)
         alg_lay.addWidget(self._btn_full)
 
+        alg_lay.addSpacing(4)
+
         self._btn_clear = QPushButton("清空结果")
-        self._btn_clear.setMinimumHeight(34)
+        self._btn_clear.setMinimumHeight(36)
         alg_lay.addWidget(self._btn_clear)
 
         col.addWidget(alg_group)
-        col.addStretch(1)
+        col.addStretch(1)                 # 【拉伸】右列底部留白
         return col
 
     def _build_status_panel(self) -> QWidget:
         """底部状态信息面板。"""
         panel = QGroupBox("当前状态")
-        lay = QVBoxLayout(panel)
-        lay.setSpacing(4)
+        lay = QHBoxLayout(panel)          # 【间距优化】改为横向排列，更紧凑
+        lay.setSpacing(32)
+        lay.setContentsMargins(16, 14, 16, 14)
 
-        self._lbl_file      = QLabel("点云文件：—")
-        self._lbl_points    = QLabel("点云大小：—")
-        self._lbl_det_res   = QLabel("检测结果：—")
-        self._lbl_seg_res   = QLabel("分割结果：—")
+        self._lbl_file   = QLabel("点云文件：—")
+        self._lbl_points = QLabel("点云大小：—")
+        self._lbl_det_res = QLabel("检测结果：—")
+        self._lbl_seg_res = QLabel("分割结果：—")
 
         for lbl in (self._lbl_file, self._lbl_points, self._lbl_det_res, self._lbl_seg_res):
             lbl.setObjectName("statusLabel")
-            lbl.setWordWrap(True)
-            lay.addWidget(lbl)
+            lbl.setWordWrap(False)
+            lay.addWidget(lbl, stretch=1)  # 【拉伸】四列均等拉伸
 
         return panel
 
@@ -268,7 +315,7 @@ class OfflinePage(QWidget):
         return line
 
     # ------------------------------------------------------------------
-    # 内部信号连接
+    # 内部信号连接（不改变）
     # ------------------------------------------------------------------
 
     def _connect_internal(self) -> None:
@@ -306,7 +353,7 @@ class OfflinePage(QWidget):
         self._single_group.setEnabled(not is_nusc)
 
     # ------------------------------------------------------------------
-    # 公开接口（供 MainWindow 调用）
+    # 公开接口（不改变）
     # ------------------------------------------------------------------
 
     def ui_data_source(self) -> str:
@@ -368,7 +415,6 @@ class OfflinePage(QWidget):
         self._btn_detect.setEnabled(has_nonempty_pcd)
         self._btn_segment.setEnabled(has_nonempty_pcd)
         self._btn_fusion.setEnabled(has_nonempty_pcd and has_results)
-        # 严格流程下必须先有点云；非严格模式下允许自动加载后执行
         can_full = has_nonempty_pcd or (allow_run_full_autoload and not defense_strict_pipeline)
         self._btn_full.setEnabled(can_full)
 

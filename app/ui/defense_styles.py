@@ -135,15 +135,16 @@ QLabel#metaLabel {
 QGroupBox {
     border: 1px solid #45475a;
     border-radius: 8px;
-    margin-top: 10px;
-    padding-top: 10px;
+    margin-top: 14px;       /* 【间距优化】title 占位高度加大 */
+    padding-top: 14px;      /* 【间距优化】title 与内容区间距 */
     color: #cba6f7;
     font-weight: bold;
+    font-size: 13px;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 6px;
+    left: 14px;
+    padding: 2px 8px;       /* 【间距优化】title 水平内边距更宽 */
 }
 
 /* ──────────────── 按钮 ──────────────── */
@@ -152,7 +153,8 @@ QPushButton {
     color: #cdd6f4;
     border: 1px solid #585b70;
     border-radius: 6px;
-    padding: 6px 12px;
+    padding: 6px 14px;      /* 【间距优化】水平内边距 12→14px */
+    min-height: 28px;       /* 【最小高度】全局按钮最小高度 28px */
 }
 QPushButton:hover {
     background-color: #45475a;
@@ -200,10 +202,17 @@ QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
     color: #cdd6f4;
     border: 1px solid #45475a;
     border-radius: 5px;
-    padding: 4px 6px;
+    padding: 5px 8px;       /* 【间距优化】内边距上下 5px，左右 8px */
+    min-height: 28px;       /* 【最小高度】所有输入框最小高度 28px */
 }
 QComboBox::drop-down {
     border: none;
+    width: 20px;
+}
+/* SpinBox 上下箭头区域最小宽度 */
+QSpinBox::up-button, QSpinBox::down-button,
+QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+    width: 18px;
 }
 
 /* ──────────────── 滚动条 ──────────────── */
@@ -237,17 +246,19 @@ QScrollArea {
 
 /* ──────────────── 单选/复选 ──────────────── */
 QRadioButton, QCheckBox {
-    spacing: 8px;
+    spacing: 10px;          /* 【间距优化】indicator 与文字间距 10px */
     color: #cdd6f4;
+    min-height: 24px;       /* 【最小高度】确保点击区域足够大 */
 }
 QRadioButton::indicator, QCheckBox::indicator {
-    width: 14px;
-    height: 14px;
+    width: 16px;            /* 【间距优化】指示器略大 */
+    height: 16px;
 }
 
 /* ──────────────── 分割线 ──────────────── */
 QFrame#hline {
-    color: #313244;
+    color: #45475a;         /* 【视觉优化】分割线颜色略亮，更清晰 */
+    max-height: 1px;
 }
 
 /* ──────────────── 状态栏 ──────────────── */
