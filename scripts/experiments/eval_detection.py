@@ -164,6 +164,26 @@ def run_openpcdet_eval(
     if "epoch_1" in Path(ckpt_file).name:
         epoch_note = "checkpoint_epoch_1，小轮次训练结果，用于验证训练闭环"
 
+    # ── 前置参数检查：cfg_file / openpcdet_root 不能为空 ──────────────────
+    missing = []
+    if not cfg_file or not cfg_file.strip():
+        missing.append("--cfg_file（OpenPCDet 配置文件路径）")
+    if not openpcdet_root or not openpcdet_root.strip():
+        missing.append("--openpcdet_root（WSL 内 OpenPCDet 根目录）")
+    if missing:
+        msg = "缺少必要参数: " + "、".join(missing)
+        print(f"[eval_detection] ✗ {msg}")
+        print("[eval_detection]   示例：--cfg_file /home/sunny/OpenPCDet/tools/cfgs/nuscenes_models/cbgs_pp_mini.yaml")
+        return {
+            "model_name":          model_name,
+            "checkpoint_path":     ckpt_file,
+            "checkpoint_size_mb":  size_mb,
+            "mAP": None, "NDS": None, "mATE": None, "mASE": None, "mAOE": None,
+            "status":  "missing_args",
+            "note":    msg,
+            "log_file": "",
+        }
+
     # 探测 WSL 内 conda.sh 实际路径（与主项目 openpcdet_json_detector.py 相同逻辑）
     conda_sh = _detect_conda_sh()
     if conda_sh is None:
@@ -281,6 +301,16 @@ def main(args: argparse.Namespace, output_dir: Path) -> pd.DataFrame:
     评估预训练模型与自训练模型，输出 detection_metrics.csv。
     返回 DataFrame 供 run_all.py 使用。
     """
+    # 整体参数预检查，给出清晰提示
+    if not getattr(args, "cfg_file", ""):
+        print("[eval_detection] ⚠ 未指定 --cfg_file，检测评估将跳过。")
+        print("  请传入 OpenPCDet 配置文件的 WSL 路径，例如：")
+        print("  --cfg_file /home/sunny/OpenPCDet/tools/cfgs/nuscenes_models/cbgs_pp_mini.yaml")
+    if not getattr(args, "openpcdet_root", ""):
+        print("[eval_detection] ⚠ 未指定 --openpcdet_root，检测评估将跳过。")
+        print("  请传入 WSL 内 OpenPCDet 根目录，例如：")
+        print("  --openpcdet_root /home/sunny/OpenPCDet")
+
     rows = []
 
     models = [
