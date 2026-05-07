@@ -201,14 +201,15 @@ def run_openpcdet_eval(
 
     print(f"[eval_detection]   conda.sh: {conda_sh}")
 
-    # 构建 bash 命令：显式 source conda.sh → activate → cd → python tools/test.py
-    # 使用 wsl -e bash -c（不加 -l），完全依赖显式 source 加载 conda，
-    # 避免非交互 shell 中 conda: command not found（exit 127）
+    # 构建 bash 命令：显式 source conda.sh → activate → cd tools → python test.py
+    # 必须 cd 到 {openpcdet_root}/tools 目录，因为 test.py 内部用相对路径
+    # 加载 cfgs/dataset_configs/xxx.yaml，从 tools/ 目录才能正确解析
+    tools_dir = openpcdet_root.rstrip("/") + "/tools"
     bash_cmd = (
         f"source {conda_sh} && "
         f"conda activate {conda_env} && "
-        f"cd {openpcdet_root} && "
-        f"python tools/test.py "
+        f"cd {tools_dir} && "
+        f"python test.py "
         f"--cfg_file {cfg_file} "
         f"--ckpt {ckpt_wsl} "
         f"--batch_size 1"
@@ -216,6 +217,7 @@ def run_openpcdet_eval(
     cmd = ["wsl", "-e", "bash", "-c", bash_cmd]
 
     print(f"[eval_detection] 开始评估模型: {model_name}")
+    print(f"[eval_detection]   工作目录: {tools_dir}")
     print(f"[eval_detection]   ckpt (WSL): {ckpt_wsl}")
     print(f"[eval_detection]   日志输出: {log_file}")
 
