@@ -102,26 +102,48 @@ def file_size_mb(win_path: str) -> float:
 
 def parse_metrics(log_text: str) -> Dict[str, Optional[float]]:
     """
-    从 OpenPCDet test.py 的 stdout/stderr 中提取常用指标。
-    支持 nuScenes / KITTI 两种格式。
-    返回字典：mAP, NDS, mATE, mASE, mAOE（不存在则为 None）。
+    从 OpenPCDet test.py 的 stdout/stderr 中提取评估指标。
+
+    优先提取 nuScenes 官方 mAP/NDS，若数据集路径缺失导致 mAP 计算失败，
+    则回退提取 recall_rcnn 与平均预测框数作为替代指标写入论文。
+
+    支持格式：
+      - nuScenes: "mAP: 0.3456"  "NDS: 0.4321"
+      - KITTI:    "Car AP@0.70, ...: 78.12 ..."
+      - recall:   "recall_rcnn_0.3: 0.061592"
     """
     result: Dict[str, Optional[float]] = {
         "mAP": None, "NDS": None,
         "mATE": None, "mASE": None, "mAOE": None,
+        # 补充指标（recall 系列，在 mAP 无法获取时作为替代）
+        "recall_rcnn_0.3": None,
+        "recall_rcnn_0.5": None,
+        "recall_rcnn_0.7": None,
+        "avg_pred_objects": None,
     }
 
-    # nuScenes 格式: "mAP: 0.3456" 或 "NDS: 0.4321"
+    # nuScenes 官方指标
     for key in ("mAP", "NDS", "mATE", "mASE", "mAOE"):
         m = re.search(rf"{key}\s*[=:]\s*([0-9]+\.[0-9]+)", log_text, re.IGNORECASE)
         if m:
             result[key] = round(float(m.group(1)), 4)
 
-    # KITTI 格式: "Car AP@0.70, 0.70, 0.70: 78.12 ..."（取第一个数值作为 mAP 近似）
+    # KITTI AP 格式（百分比转 0~1）
     if result["mAP"] is None:
         m = re.search(r"AP@[^:]+:\s*([0-9]+\.[0-9]+)", log_text)
         if m:
-            result["mAP"] = round(float(m.group(1)) / 100.0, 4)  # 转成 0~1
+            result["mAP"] = round(float(m.group(1)) / 100.0, 4)
+
+    # recall 指标（OpenPCDet 日志固定格式）
+    for key in ("recall_rcnn_0.3", "recall_rcnn_0.5", "recall_rcnn_0.7"):
+        m = re.search(rf"{key}\s*:\s*([0-9]+\.[0-9]+)", log_text)
+        if m:
+            result[key] = round(float(m.group(1)), 6)
+
+    # 平均预测框数
+    m = re.search(r"Average predicted number of objects\([0-9]+ samples\)\s*:\s*([0-9]+\.[0-9]+)", log_text)
+    if m:
+        result["avg_pred_objects"] = round(float(m.group(1)), 3)
 
     return result
 
@@ -287,6 +309,10 @@ def run_openpcdet_eval(
         "mATE":                metrics["mATE"],
         "mASE":                metrics["mASE"],
         "mAOE":                metrics["mAOE"],
+        "recall_rcnn_0.3":     metrics["recall_rcnn_0.3"],
+        "recall_rcnn_0.5":     metrics["recall_rcnn_0.5"],
+        "recall_rcnn_0.7":     metrics["recall_rcnn_0.7"],
+        "avg_pred_objects":    metrics["avg_pred_objects"],
         "status":              status,
         "note":                note_str,
         "log_file":            str(log_file),

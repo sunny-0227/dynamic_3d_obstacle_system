@@ -197,11 +197,34 @@ def generate_report(
             return f"_该实验未成功生成（{csv_name} 不存在或读取失败）_"
         return df_to_markdown(df)
 
-    # 为检测表增加可读性列（去掉 log_file 列）
-    if df_detect is not None and "log_file" in df_detect.columns:
-        df_detect_disp = df_detect.drop(columns=["log_file"])
+    # 为检测表增加可读性列（去掉 log_file 列，并决定展示哪些列）
+    if df_detect is not None:
+        drop_cols = [c for c in ["log_file"] if c in df_detect.columns]
+        df_detect_disp = df_detect.drop(columns=drop_cols)
+
+        # 若 mAP/NDS 全部为空（nuScenes 数据路径缺失），则展示 recall 替代列
+        map_empty = df_detect_disp["mAP"].isna().all() if "mAP" in df_detect_disp.columns else True
+        if not map_empty:
+            # 有 mAP：去掉 recall 列以保持表格简洁
+            recall_cols = [c for c in ["recall_rcnn_0.3", "recall_rcnn_0.5",
+                                       "recall_rcnn_0.7", "avg_pred_objects"]
+                           if c in df_detect_disp.columns]
+            df_detect_disp = df_detect_disp.drop(columns=recall_cols)
+        # 否则保留 recall 列，在报告注释中说明
+        detect_note_extra = (
+            "\n> **注（数据路径说明）**：nuScenes 官方 mAP 计算需要 NuScenes Python SDK 访问原始"
+            "数据集元数据（`../data/nuscenes/v1.0-mini`），若评估时该路径不存在则 mAP 为空。\n"
+            "> 推理本身已完整执行，表中 `recall_rcnn_*` 与 `avg_pred_objects` 为从日志提取的"
+            "替代指标，可反映模型实际检测能力。\n"
+            "> **修复方法**：在 WSL 中执行以下命令建立符号链接后重新运行，即可获得完整 mAP：\n"
+            "> ```bash\n"
+            "> # 将 <your_nuscenes_path> 替换为 nuScenes mini 数据集的实际路径\n"
+            "> ln -s <your_nuscenes_path> /home/sunny/OpenPCDet/data/nuscenes\n"
+            "> ```"
+        ) if map_empty else ""
     else:
         df_detect_disp = df_detect
+        detect_note_extra = ""
 
     # 分割表只展示部分关键列
     if df_seg is not None:
@@ -242,6 +265,7 @@ def generate_report(
         f"> 注：mAP 来自 OpenPCDet 官方 tools/test.py 输出日志解析。",
         f"> 若日志中未出现对应指标，则填写空值并在 note 列说明。",
         f"> 完整评估日志见 outputs/experiments/openpcdet_eval_*.log。",
+        detect_note_extra,
         f"",
         f"---",
         f"",
