@@ -317,10 +317,13 @@ def run_openpcdet_eval(
             "原因同上（权重与配置不匹配，无有效检测框）"
         )
 
-    # 记录哪些核心指标未能解析
+    # 记录哪些核心指标未能解析（已有权重不匹配说明时不重复添加）
     core_keys = ["mAP", "NDS"]
     unresolved_core = [k for k in core_keys if metrics.get(k) is None]
-    if unresolved_core and not any("权重与配置不匹配" in n for n in notes):
+    already_explained = any(
+        kw in n for n in notes for kw in ("权重维度不一致", "无有效检测框", "mAP 无法评估")
+    )
+    if unresolved_core and not already_explained:
         notes.append(f"未从官方日志中解析到指标: {', '.join(unresolved_core)}")
     note_str = "；".join(notes) if notes else ""
 
