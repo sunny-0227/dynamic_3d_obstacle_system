@@ -21,6 +21,51 @@ import pandas as pd
 
 
 # ---------------------------------------------------------------------------
+# WSL conda.sh 探测（与主项目 openpcdet_json_detector.py 相同逻辑）
+# ---------------------------------------------------------------------------
+
+_CONDA_SH_CANDIDATES = [
+    "~/miniconda3/etc/profile.d/conda.sh",
+    "~/anaconda3/etc/profile.d/conda.sh",
+    "~/miniforge3/etc/profile.d/conda.sh",
+    "/opt/conda/etc/profile.d/conda.sh",
+    "/usr/local/conda/etc/profile.d/conda.sh",
+]
+
+# 缓存探测结果，避免每次调用都重新探测
+_cached_conda_sh: Optional[str] = None
+_conda_sh_probed: bool = False
+
+
+def _detect_conda_sh() -> Optional[str]:
+    """
+    通过 wsl test -f 逐一探测候选 conda.sh 路径是否存在。
+    找到第一个存在的路径后缓存并返回，全部失败返回 None。
+    """
+    global _cached_conda_sh, _conda_sh_probed
+    if _conda_sh_probed:
+        return _cached_conda_sh
+
+    _conda_sh_probed = True
+    for sh in _CONDA_SH_CANDIDATES:
+        try:
+            probe = subprocess.run(
+                ["wsl", "bash", "-lc", f"test -f {sh} && echo YES || echo NO"],
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+                timeout=10,
+            )
+            if (probe.stdout or "").strip() == "YES":
+                print(f"[eval_detection] 找到 conda.sh: {sh}")
+                _cached_conda_sh = sh
+                return sh
+        except Exception as e:
+            print(f"[eval_detection] 探测 {sh} 失败: {e}")
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # 路径工具
 # ---------------------------------------------------------------------------
 
@@ -118,17 +163,26 @@ def run_openpcdet_eval(
     if "epoch_1" in Path(ckpt_file).name:
         epoch_note = "checkpoint_epoch_1，小轮次训练结果，用于验证训练闭环"
 
-    # 构建 bash 命令（显式 source conda.sh，兼容非交互 shell）
-    conda_candidates = [
-        "~/miniconda3/etc/profile.d/conda.sh",
-        "~/anaconda3/etc/profile.d/conda.sh",
-        "/opt/conda/etc/profile.d/conda.sh",
-    ]
-    source_block = " || ".join(
-        [f"source {c} 2>/dev/null" for c in conda_candidates]
-    )
+    # 探测 WSL 内 conda.sh 实际路径（与主项目 openpcdet_json_detector.py 相同逻辑）
+    conda_sh = _detect_conda_sh()
+    if conda_sh is None:
+        print("[eval_detection] ✗ 无法找到 WSL 内 conda.sh，请确认 conda 已安装")
+        status = "conda_sh_not_found"
+        return {
+            "model_name":          model_name,
+            "checkpoint_path":     ckpt_file,
+            "checkpoint_size_mb":  size_mb,
+            "mAP": None, "NDS": None, "mATE": None, "mASE": None, "mAOE": None,
+            "status":  status,
+            "note":    "未找到 WSL conda.sh，请检查 miniconda3/anaconda3 是否已安装",
+            "log_file": "",
+        }
+
+    print(f"[eval_detection]   conda.sh: {conda_sh}")
+
+    # 构建 bash 命令：source conda.sh → activate → cd → python tools/test.py
     bash_cmd = (
-        f"({source_block}); "
+        f"source {conda_sh} && "
         f"conda activate {conda_env} && "
         f"cd {openpcdet_root} && "
         f"python tools/test.py "
