@@ -9,6 +9,7 @@ __pycache__/
 
 # 日志输出
 outputs/logs/
+outputs/experiments/
 *.log
 
 # 临时检测结果（OpenPCDet 输出的 JSON/bin 临时文件）
