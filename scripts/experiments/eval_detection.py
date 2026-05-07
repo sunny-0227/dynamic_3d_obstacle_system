@@ -122,13 +122,20 @@ def parse_metrics(log_text: str) -> Dict[str, Optional[float]]:
         "avg_pred_objects": None,
     }
 
-    # nuScenes 官方指标
-    for key in ("mAP", "NDS", "mATE", "mASE", "mAOE"):
-        m = re.search(rf"{key}\s*[=:]\s*([0-9]+\.[0-9]+)", log_text, re.IGNORECASE)
+    # nuScenes 官方汇总行格式（日志末尾的 "mAP:\t 0.0045" 形式）
+    # 优先匹配独立一行的 "mAP: 数值"，避免被 "mean AP: 数值" 误匹配
+    for key in ("mAP", "NDS"):
+        m = re.search(rf"^{key}:\s+([0-9]+\.[0-9]+)", log_text, re.MULTILINE | re.IGNORECASE)
         if m:
             result[key] = round(float(m.group(1)), 4)
 
-    # KITTI AP 格式（百分比转 0~1）
+    # nuScenes 误差指标（行格式：trans_err: 0.9395）
+    for key, log_key in (("mATE", "trans_err"), ("mASE", "scale_err"), ("mAOE", "orient_err")):
+        m = re.search(rf"^{log_key}:\s+([0-9]+\.[0-9]+)", log_text, re.MULTILINE)
+        if m:
+            result[key] = round(float(m.group(1)), 4)
+
+    # KITTI AP 格式（百分比转 0~1，兜底）
     if result["mAP"] is None:
         m = re.search(r"AP@[^:]+:\s*([0-9]+\.[0-9]+)", log_text)
         if m:
@@ -295,9 +302,26 @@ def run_openpcdet_eval(
     notes = []
     if epoch_note:
         notes.append(epoch_note)
-    unresolved = [k for k, v in metrics.items() if v is None]
-    if unresolved:
-        notes.append(f"未从官方日志中解析到该指标: {', '.join(unresolved)}")
+
+    # 若 avg_pred=0 且 mAP 为空，说明权重与配置不匹配，模型无有效输出
+    avg_pred = metrics.get("avg_pred_objects")
+    if avg_pred is not None and avg_pred == 0.0 and metrics.get("mAP") is None:
+        notes.append(
+            "avg_pred_objects=0，模型无有效检测输出；"
+            "预训练权重与当前配置文件不匹配（权重维度不一致，日志中有大量 Not updated weight），"
+            "mAP 无法评估"
+        )
+    elif "Invalid box type" in combined_log and metrics.get("mAP") is None:
+        notes.append(
+            "NuScenes 评估器因预测框类型无效（Invalid box type: None）崩溃，"
+            "原因同上（权重与配置不匹配，无有效检测框）"
+        )
+
+    # 记录哪些核心指标未能解析
+    core_keys = ["mAP", "NDS"]
+    unresolved_core = [k for k in core_keys if metrics.get(k) is None]
+    if unresolved_core and not any("权重与配置不匹配" in n for n in notes):
+        notes.append(f"未从官方日志中解析到指标: {', '.join(unresolved_core)}")
     note_str = "；".join(notes) if notes else ""
 
     row = {
