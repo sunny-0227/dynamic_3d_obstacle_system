@@ -49,8 +49,9 @@ def _detect_conda_sh() -> Optional[str]:
     _conda_sh_probed = True
     for sh in _CONDA_SH_CANDIDATES:
         try:
+            # 用 wsl -e bash -c 探测（不加 -l，避免 login shell 副作用）
             probe = subprocess.run(
-                ["wsl", "bash", "-lc", f"test -f {sh} && echo YES || echo NO"],
+                ["wsl", "-e", "bash", "-c", f"test -f {sh} && echo YES || echo NO"],
                 capture_output=True, text=True,
                 encoding="utf-8", errors="replace",
                 timeout=10,
@@ -180,7 +181,9 @@ def run_openpcdet_eval(
 
     print(f"[eval_detection]   conda.sh: {conda_sh}")
 
-    # 构建 bash 命令：source conda.sh → activate → cd → python tools/test.py
+    # 构建 bash 命令：显式 source conda.sh → activate → cd → python tools/test.py
+    # 使用 wsl -e bash -c（不加 -l），完全依赖显式 source 加载 conda，
+    # 避免非交互 shell 中 conda: command not found（exit 127）
     bash_cmd = (
         f"source {conda_sh} && "
         f"conda activate {conda_env} && "
@@ -190,7 +193,7 @@ def run_openpcdet_eval(
         f"--ckpt {ckpt_wsl} "
         f"--batch_size 1"
     )
-    cmd = ["wsl", "bash", "-lc", bash_cmd]
+    cmd = ["wsl", "-e", "bash", "-c", bash_cmd]
 
     print(f"[eval_detection] 开始评估模型: {model_name}")
     print(f"[eval_detection]   ckpt (WSL): {ckpt_wsl}")
